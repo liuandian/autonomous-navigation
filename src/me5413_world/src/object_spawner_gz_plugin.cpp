@@ -185,6 +185,21 @@ void ObjectSpawner::spawnRandomBoxes()
 
   // // merge the two marker arrays
   // this->box_markers_msg_.markers.insert(this->box_markers_msg_.markers.end(), text_markers_msg.markers.begin(), text_markers_msg.markers.end());
+  
+  // 添加一个固定位置的盒子 (22,19)
+  ignition::math::Vector3d fixed_point(21.0, 19.0, Z_COORD);
+  this->box_points.push_back(fixed_point);
+  
+  // 发布位于固定位置的盒子模型
+  msgs::Factory fixed_box_msg;
+  // 使用标签列表中的第一个标签或指定一个固定标签
+  const std::string fixed_box_name = "number" + std::to_string(box_labels[0]);
+  fixed_box_msg.set_sdf_filename("model://" + fixed_box_name);
+  this->box_names.push_back(fixed_box_name + "_fixed");
+  msgs::Set(fixed_box_msg.mutable_pose(), ignition::math::Pose3d(fixed_point, ignition::math::Quaterniond(0, 0, 0)));
+  this->pub_factory_->Publish(fixed_box_msg);
+  ROS_INFO_STREAM("Generated fixed " << fixed_box_name << " at (" << fixed_point.X() << ", " << fixed_point.Y() << ", " << fixed_point.Z() << ")");
+  common::Time::MSleep(500);
 
   return;
 };

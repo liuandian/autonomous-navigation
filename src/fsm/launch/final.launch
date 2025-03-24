@@ -1,0 +1,10 @@
+<launch>
+    <!-- Include world launch file -->
+    <include file="$(find me5413_world)/launch/world.launch" />
+    
+    <!-- Include navigation launch file -->
+    <include file="$(find me5413_world)/launch/manual.launch" />
+    
+    <!-- Include ocr launch file -->
+    <include file="$(find ocr)/launch/ocr.launch" />
+</launch>

@@ -49,3 +49,15 @@ me5413_world:
     x: 2.9
     y: -13.1
     yaw: 0.0
+    
+# 导航参数
+navigation:
+  goal_positions:
+    - {name: "exploration_point", x: 1.0, y: 10.0, theta: 0.0}
+    - {name: "box_area", x: 5.0, y: 8.0, theta: 1.57}
+    - {name: "finish_point", x: 0.0, y: 0.0, theta: 0.0}
+  
+# 检测参数
+detection:
+  timeout: 10.0  # 检测超时时间
+  topic: "/box_detector/position"
