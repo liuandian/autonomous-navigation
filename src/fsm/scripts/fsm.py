@@ -98,7 +98,7 @@ def main():
     # 启动launch文件
     uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
     roslaunch.configure_logging(uuid)
-    launch_file = "/home/zhihan/catkin_ws/src/ME5413_Final_Project_Group12/src/fsm/launch/final.launch"
+    launch_file = "./src/fsm/launch/final.launch"
     launch = roslaunch.parent.ROSLaunchParent(uuid, [launch_file])
     launch.start()
     rospy.loginfo("Launch file started")
