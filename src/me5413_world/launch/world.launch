@@ -1,21 +1,24 @@
 <launch>
-    <!-- Using the simulation clock -->
-    <param name="/use_sim_time" value="true"/>
+  <!-- 使用仿真时间 -->
+  <param name="/use_sim_time" value="true"/>
 
-    <!-- Load the project world into Gazebo -->
-    <include file="$(find gazebo_ros)/launch/empty_world.launch">
-        <arg name="world_name" value="$(find me5413_world)/worlds/me5413_project_2425.world"/>
-        <arg name="debug" value="false" />
-        <arg name="gui" value="true" />
-        <arg name="paused" value="false"/>
-        <arg name="use_sim_time" value="true"/>
-        <arg name="headless" value="false"/>
-    </include>
+  <!-- 加载 world -->
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="world_name" value="$(find me5413_world)/worlds/me5413_project_2425.world"/>
+    <arg name="debug" value="false" />
+    <arg name="gui" value="true" />
+    <arg name="paused" value="false"/>
+    <arg name="use_sim_time" value="true"/>
+    <arg name="headless" value="false"/>
+  </include>
 
-    <!-- Add our jackal robot into the simulation -->
-    <include file="$(find me5413_world)/launch/include/spawn_jackal.launch"/>
-    
-    <!-- Load the destination configuration -->
-    <rosparam command="load" file="$(find me5413_world)/config/config.yaml" />
+  <!-- 加载 YAML 配置 -->
+  <rosparam command="load" file="$(find me5413_world)/config/config.yaml" />
 
+  <!-- 加载机器人（手动传入起始位姿） -->
+  <include file="$(find me5413_world)/launch/include/spawn_jackal.launch">
+    <arg name="x" value="20.0" />
+    <arg name="y" value="16.0" />
+    <arg name="yaw" value="3.14" />
+  </include>
 </launch>

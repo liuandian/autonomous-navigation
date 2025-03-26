@@ -2,11 +2,7 @@
   <!-- Configuration of Jackal which you would like to simulate.
        See jackal_description for details. -->
   <arg name="config" default="base" />
-  <!-- 起始位姿参数 -->
-  <arg name="x" default="0.0" />
-  <arg name="y" default="0.0" />
-  <arg name="z" default="3" />
-  <arg name="yaw" default="0.0" />
+
   <!-- Load Jackal's description, controllers, and teleop nodes. -->
   <!-- <include file="$(find jackal_description)/launch/description.launch">
     <arg name="config" value="$(arg config)" />
@@ -31,8 +27,7 @@
 
   <!-- Spawn Jackal -->
   <node name="urdf_spawner" pkg="gazebo_ros" type="spawn_model"
-        args="-urdf -model jackal -param robot_description -x $(arg x) -y $(arg y) -z $(arg z) -Y $(arg yaw)"
-        output="screen" />
+	      args="-urdf -model jackal -param robot_description -x 0 -y 0 -z 3.0 -R 0 -P 0 -Y 1.57079632679" />
 
   <!-- Add a static world frame -->
   <!-- <node pkg="tf2_ros" type="static_transform_publisher" name="world_broadcast" args="0 0 0 0 0 0 1 world odom" /> -->
