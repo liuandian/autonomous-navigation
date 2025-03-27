@@ -7,4 +7,7 @@
     
     <!-- Include ocr launch file -->
     <include file="$(find ocr)/launch/ocr.launch" />
+
+    <!-- Include box_detection launch file -->
+    <include file="$(find box_detection)/launch/box_detection.launch" />
 </launch>
