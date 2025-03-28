@@ -20,7 +20,7 @@ class Initialize(smach.State):
         return 'initialized'
 
 # 定义状态：导航到探索区域
-class NavigateToGoal(smach.State):
+class NavigateToExplorationArea(smach.State):
     '''使用move_base进行导航'''
     def __init__(self):
         smach.State.__init__(self, outcomes=['succeeded', 'failed', 'preempted'])
@@ -55,7 +55,7 @@ class NavigateToGoal(smach.State):
             return 'failed'
 
 # 定义状态：任务一
-class TaskOne(smach.State):
+class ExploreFrontier(smach.State):
     '''rostopic pub /ocr_trigger std_msgs/Bool "data: true" -1'''
     def __init__(self):
         smach.State.__init__(self, outcomes=['succeeded', 'failed'])
@@ -73,7 +73,7 @@ class TaskOne(smach.State):
         return 'succeeded'
     
 # 定义状态：任务二  
-class TaskTwo(smach.State):
+class DetectBridge(smach.State):
     def __init__(self):
         smach.State.__init__(self, outcomes=['succeeded', 'failed'])
         
@@ -83,7 +83,7 @@ class TaskTwo(smach.State):
         return 'succeeded'
     
 # 定义状态：任务三
-class TaskThree(smach.State):
+class NavigateToGoal(smach.State):
     def __init__(self):
         smach.State.__init__(self, outcomes=['succeeded', 'failed'])
         
@@ -123,15 +123,15 @@ def main():
         #                                    'failed':'mission_failed', 
         #                                    'preempted':'mission_failed'})
         
-        smach.StateMachine.add('TASK_ONE', TaskOne(),
+        smach.StateMachine.add('TASK_ONE', ExploreFrontier(),
                                transitions={'succeeded':'TASK_TWO', 
                                            'failed':'mission_failed'})
         
-        smach.StateMachine.add('TASK_TWO', TaskTwo(),
+        smach.StateMachine.add('TASK_TWO', DetectBridge(),
                                transitions={'succeeded':'TASK_THREE', 
                                            'failed':'mission_failed'})
         
-        smach.StateMachine.add('TASK_THREE', TaskThree(),
+        smach.StateMachine.add('TASK_THREE', NavigateToGoal(),
                                transitions={'succeeded':'mission_completed', 
                                            'failed':'mission_failed'})
     

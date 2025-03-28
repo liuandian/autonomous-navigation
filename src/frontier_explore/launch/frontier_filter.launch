@@ -1,0 +1,9 @@
+<launch>
+  <node pkg="frontier_explore" type="frontier_filter.py" name="region_limited_explorer" output="screen">
+    <!-- 该范围其实为盒子坐标范围，范围外的前沿点将被过滤掉，可以考虑稍微放大 -->
+    <param name="x_min" value="2" />
+    <param name="x_max" value="22" />
+    <param name="y_min" value="11" />
+    <param name="y_max" value="19" />
+  </node>
+</launch>
