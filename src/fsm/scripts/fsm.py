@@ -29,7 +29,7 @@ class NavigateToExplorationArea(smach.State):
         
     def execute(self, userdata):
         goal = MoveBaseGoal()
-        goal.target_pose.header.frame_id = "map"
+        goal.target_pose.header.frame_id = "map" # 不确定
         goal.target_pose.header.stamp = rospy.Time.now()
         
         # 设置导航目标位置

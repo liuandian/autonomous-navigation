@@ -4,6 +4,7 @@
     
     <!-- Include navigation launch file -->
     <include file="$(find me5413_world)/launch/manual.launch" />
+    <!-- <include file="$(find me5413_world)/launch/navigation.launch" /> -->
     
     <!-- Include ocr launch file -->
     <include file="$(find ocr)/launch/ocr.launch" />
@@ -16,4 +17,5 @@
 
     <!-- Include navigation launch file -->
     <include file="$(find navigation)/launch/move_base.launch" />
+
 </launch>
