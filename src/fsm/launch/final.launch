@@ -13,4 +13,7 @@
 
     <!-- Include frontier_explore launch file -->
     <include file="$(find frontier_explore)/launch/frontier_explore.launch" />
+
+    <!-- Include navigation launch file -->
+    <include file="$(find navigation)/launch/move_base.launch" />
 </launch>

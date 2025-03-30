@@ -33,8 +33,8 @@ class NavigateToExplorationArea(smach.State):
         goal.target_pose.header.stamp = rospy.Time.now()
         
         # 设置导航目标位置
-        goal.target_pose.pose.position.x = 1.0
-        goal.target_pose.pose.position.y = 10.0
+        goal.target_pose.pose.position.x = 23.0
+        goal.target_pose.pose.position.y = 19.0
         goal.target_pose.pose.orientation.w = 1.0
         
         rospy.loginfo('向目标点导航中...')
@@ -115,13 +115,12 @@ def main():
     with sm:
         smach.StateMachine.add('INITIALIZE', Initialize(), 
                             #    transitions={'initialized':'NAVIGATE_TO_GOAL',
-                               transitions={'initialized':'TASK_ONE',
+                               transitions={'initialized':'NAVIGATE_TO_GOAL',
                                            'failed':'mission_failed'})
         
-        # smach.StateMachine.add('NAVIGATE_TO_GOAL', NavigateToGoal(),
-        #                        transitions={'succeeded':'TASK_ONE', 
-        #                                    'failed':'mission_failed', 
-        #                                    'preempted':'mission_failed'})
+        smach.StateMachine.add('NAVIGATE_TO_GOAL', NavigateToGoal(),
+                               transitions={'succeeded':'TASK_ONE', 
+                                           'failed':'mission_failed'})
         
         smach.StateMachine.add('TASK_ONE', ExploreFrontier(),
                                transitions={'succeeded':'TASK_TWO', 
