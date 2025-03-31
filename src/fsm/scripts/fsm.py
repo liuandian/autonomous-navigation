@@ -95,15 +95,15 @@ class NavigateToGoal(smach.State):
 
 # 主函数
 def main():
-    # 启动launch文件
-    uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
-    roslaunch.configure_logging(uuid)
-    launch_file = "./src/fsm/launch/final.launch"
-    launch = roslaunch.parent.ROSLaunchParent(uuid, [launch_file])
-    launch.start()
-    rospy.loginfo("Launch file started")
-    # 等待ROS系统准备就绪
-    rospy.sleep(10)
+    # # 启动launch文件
+    # uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
+    # roslaunch.configure_logging(uuid)
+    # launch_file = "./src/fsm/launch/final.launch"
+    # launch = roslaunch.parent.ROSLaunchParent(uuid, [launch_file])
+    # launch.start()
+    # rospy.loginfo("Launch file started")
+    # # 等待ROS系统准备就绪
+    # rospy.sleep(10)
     
     # 初始化ROS节点
     rospy.init_node('task_coordinator')

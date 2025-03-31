@@ -39,7 +39,7 @@ class BoxDetector:
         # Set the frequency for publishing messages (10 Hz)
         self.rate = rospy.Rate(10)  # 10 Hz
 
-        # Subscribe to ROS topics
+        # Subscribe to ROS topics, 第二次SLAM的2区点云
         rospy.Subscriber("/mid/points", PointCloud2, self.pointcloud_callback)
 
         # Publish detected 3D object center points

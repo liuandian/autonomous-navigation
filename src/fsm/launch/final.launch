@@ -18,4 +18,7 @@
     <!-- Include navigation launch file -->
     <include file="$(find navigation)/launch/move_base.launch" />
 
+    <!-- Include SLAM launch file -->
+    <include file="$(find slam)/launch/fast_lio.launch" />
+
 </launch>
