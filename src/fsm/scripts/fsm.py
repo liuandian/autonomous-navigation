@@ -9,6 +9,7 @@ import actionlib
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 import roslaunch
 from nav_msgs.msg import OccupancyGrid
+from visualization_msgs.msg import MarkerArray
 
 # 定义状态：初始化
 class Initialize(smach.State):
@@ -20,64 +21,123 @@ class Initialize(smach.State):
 
         return 'initialized'
 
-# 定义状态：导航到探索区域
-class NavigateToExplorationArea(smach.State):
-    '''使用move_base进行导航'''
-    def __init__(self):
-        smach.State.__init__(self, outcomes=['succeeded', 'failed', 'preempted'])
-        self.client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
-        self.client.wait_for_server()
-        
-    def execute(self, userdata):
-        goal = MoveBaseGoal()
-        goal.target_pose.header.frame_id = "map" # 不确定
-        goal.target_pose.header.stamp = rospy.Time.now()
-        
-        # 设置导航目标位置
-        goal.target_pose.pose.position.x = 23.0
-        goal.target_pose.pose.position.y = 19.0
-        goal.target_pose.pose.orientation.w = 1.0
-        
-        rospy.loginfo('向目标点导航中...')
-        self.client.send_goal(goal)
-        
-        # 等待导航完成并获取结果
-        self.client.wait_for_result()
-        result = self.client.get_state()
-        
-        if result == actionlib.GoalStatus.SUCCEEDED:
-            rospy.loginfo('成功到达目标点')
-            return 'succeeded'
-        elif result == actionlib.GoalStatus.PREEMPTED:
-            rospy.loginfo('导航被取消')
-            return 'preempted'
-        else:
-            rospy.loginfo('导航失败')
-            return 'failed'
-
 # 定义状态：前沿探索任务
 class ExploreFrontier(smach.State):
     def __init__(self):
         smach.State.__init__(self, outcomes=['succeeded', 'failed'])
+        
         # 初始化探索区域的地图数据
         self.costmap_msg = OccupancyGrid()
         self.costmap_updates_msg = OccupancyGrid()
         
-        # 发布探索区域的地图数据
-        self.explore_costmap_publisher = rospy.Publisher('/move_base/global_costmap/costmap', OccupancyGrid, queue_size=10)
-        self.explore_costmap_updates_publisher = rospy.Publisher('/move_base/global_costmap/costmap_updates', OccupancyGrid, queue_size=10)
+        # 全局代价地图的订阅器
+        self.costmap_subscriber = rospy.Subscriber('/move_base/global_costmap/costmap', OccupancyGrid, self.costmap_callback)
+        self.costmap_updates_subscriber = rospy.Subscriber('/move_base/global_costmap/costmap_updates', OccupancyGrid, self.costmap_updates_callback)
+        
+        # 前沿探索区域的地图数据的发布器
+        self.explore_costmap_publisher = rospy.Publisher('/frontier_explore/costmap', OccupancyGrid, queue_size=10)
+        self.explore_costmap_updates_publisher = rospy.Publisher('/frontier_explore/costmap_updates', OccupancyGrid, queue_size=10)
+        
+        # 添加前沿点订阅器 - 监听explore_lite发布的前沿点可视化
+        self.frontier_subscriber = rospy.Subscriber('/explore/frontiers', MarkerArray, self.frontier_callback)
+        
+        # 前沿点计数和阈值设置
+        self.frontier_count = 999  # 初始化为一个大数字
+        self.frontier_threshold = 3  # 当前沿点数量小于此值时认为探索完成
         
     def execute(self, userdata):
-        # TODO:初始化探索区域的地图数据，costmap_msg来源于/map, costmap_updates_msg通常来源于/map_updates
-        self.costmap_msg = ...
-        self.costmap_updates_msg = ...
+        rospy.loginfo('开始前沿探索任务...')
 
-        rospy.loginfo('执行前沿探索任务...')
-        # 这里可以添加前沿探索的代码
-        # 例如，发布探索区域的地图数据
-        self.explore_costmap_publisher.publish(self.costmap_msg)
-        self.explore_costmap_updates_publisher.publish(self.costmap_updates_msg)
+        # 定期检查前沿点数量和更新掩码地图
+        rate = rospy.Rate(0.5)  # 每2秒检查一次
+        explore_start_time = rospy.Time.now()
+        max_explore_time = rospy.Duration(300)  # 最大探索时间限制为5分钟
+        
+        rospy.loginfo('开始监控前沿点数量，阈值为%d', self.frontier_threshold)
+        
+        # 等待前沿探索启动并开始发布前沿点
+        rospy.sleep(5)  
+        
+        while not rospy.is_shutdown():
+            if self.costmap_msg.data == [] or self.costmap_updates_msg.data == []:
+                rospy.loginfo('等待地图数据...')
+                continue
+            rospy.loginfo('收到地图数据，开始处理')
+
+            # 更新掩码代价地图
+            masked_costmap = self.segment_costmap(self.costmap_msg)
+            masked_costmap_updates = self.segment_costmap(self.costmap_updates_msg)
+            rospy.loginfo('掩码代价地图已更新')
+            
+            self.explore_costmap_publisher.publish(masked_costmap)
+            self.explore_costmap_updates_publisher.publish(masked_costmap_updates)
+            rospy.loginfo('掩码代价地图已发布')
+            
+            # 检查前沿点数量
+            rospy.loginfo('当前前沿点数量: %d (阈值: %d)', self.frontier_count, self.frontier_threshold)
+            
+            # 如果前沿点数量小于阈值，认为探索完成
+            if self.frontier_count <= self.frontier_threshold:
+                rospy.loginfo('前沿点数量已低于阈值，探索任务完成')
+                return 'succeeded'
+            
+            # 检查是否超时
+            if (rospy.Time.now() - explore_start_time) > max_explore_time:
+                rospy.loginfo('探索任务超时，强制完成')
+                return 'succeeded'
+            
+            rate.sleep()
+        
+        return 'succeeded'
+
+    def costmap_callback(self, msg):
+        self.costmap_msg = msg
     
+    def costmap_updates_callback(self, msg):
+        self.costmap_updates_msg = msg
+    
+    def frontier_callback(self, msg):
+        # 计算有效的前沿点数量（通常每个前沿由多个标记点组成）
+        # 只计算TYPE_SPHERE类型的标记，它代表前沿中心点
+        frontier_count = 0
+        for marker in msg.markers:
+            if marker.type == marker.SPHERE:
+                frontier_count += 1
+        
+        self.frontier_count = frontier_count
+        
+    def segment_costmap(self, costmap_msg):
+        # 复制原始代价地图
+        masked_costmap = costmap_msg
+        
+        # 设置不需要探索的区域为障碍物(100)或未知区域(-1)
+        width = masked_costmap.info.width
+        height = masked_costmap.info.height
+        resolution = masked_costmap.info.resolution
+        origin_x = masked_costmap.info.origin.position.x
+        origin_y = masked_costmap.info.origin.position.y
+        
+        # 转换实际坐标到地图索引
+        x_min = int((2.0 - origin_x) / resolution)
+        x_max = int((22.0 - origin_x) / resolution)
+        y_min = int((0.0 - origin_y) / resolution)
+        y_max = int((11.0 - origin_y) / resolution)
+        
+        # 限制索引在地图范围内
+        x_min = max(0, min(width-1, x_min))
+        x_max = max(0, min(width-1, x_max))
+        y_min = max(0, min(height-1, y_min))
+        y_max = max(0, min(height-1, y_max))
+        
+        # 标记区域为障碍物
+        for y in range(y_min, y_max+1):
+            for x in range(x_min, x_max+1):
+                idx = y * width + x
+                if idx < len(masked_costmap.data):
+                    masked_costmap.data[idx] = 100  # 标记为障碍物
+                    
+        return masked_costmap          
+
 # 定义状态：盒子位置检测任务
 class DetectBoxPose(smach.State):
     def __init__(self):
@@ -371,6 +431,7 @@ class NavigateToGoalAndOCR(smach.State):
 
 # 主函数
 def main():
+    ############先开启launch文件，启动world, navigation, ocr等节点############
     # 初始化ROS节点
     rospy.init_node('task_coordinator')
 
@@ -382,12 +443,7 @@ def main():
         smach.StateMachine.add('INITIALIZE', Initialize(), 
                                transitions={'initialized':'NAVIGATE_TO_EXPLORATION_AREA',
                                            'failed':'mission_failed'})
-        
-        smach.StateMachine.add('NAVIGATE_TO_EXPLORATION_AREA', NavigateToExplorationArea(), 
-                               transitions={'succeeded':'EXPLORE_FRONTIER', 
-                                           'failed':'mission_failed',
-                                           'preempted':'mission_failed'})
-        
+                
         smach.StateMachine.add('EXPLORE_FRONTIER', ExploreFrontier(),
                                transitions={'succeeded':'DETECT_BOX_POSE', 
                                            'failed':'mission_failed'})
