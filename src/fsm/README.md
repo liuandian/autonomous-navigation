@@ -113,3 +113,68 @@ Initialize ──成功──→ NavigateToGoal ──成功──→ TASK_ONE �
 1. 当传感器数据导致代价地图变化时，`move_base`计算出变化的部分
 2. 这些变化被打包成一个小型OccupancyGrid消息，只包含修改过的区域
 3. 这个增量更新被发布到`/move_base/global_costmap/costmap_updates`
+
+### 触发器有哪些
+
+#### 发布的触发消息
+
+1. **`/box_detection_trigger`**
+   - 类型：`std_msgs/Bool`
+   - 发布者：`DetectBoxPose`状态
+   - 作用：触发外部盒子检测节点开始检测场景中的盒子
+   - 数据：`True`表示开始检测
+
+2. **`/ocr_trigger`**
+   - 类型：`std_msgs/Bool`
+   - 发布者：`NavigateToBoxAndOCR`和`NavigateToGoalAndOCR`状态
+   - 作用：触发OCR节点开始识别图像中的文字
+   - 数据：`True`表示开始OCR识别
+   - 命令行测试：`rostopic pub /ocr_trigger std_msgs/Bool "data: true" -1`
+
+3. **`/bridge_detection_trigger`**
+   - 类型：`std_msgs/Bool`
+   - 发布者：`DetectBridge`状态
+   - 作用：触发桥梁检测节点开始检测场景中的桥梁
+   - 数据：`True`表示开始桥梁检测
+
+4. **`/open_bridge`**
+   - 类型：`std_msgs/Bool`
+   - 发布者：`OpenBridgeAndNavigate`状态
+   - 作用：触发桥梁控制节点打开桥梁
+   - 数据：`True`表示打开桥梁
+
+5. **`/move_base/global_costmap/costmap`**和**`/move_base/global_costmap/costmap_updates`**
+   - 类型：`nav_msgs/OccupancyGrid`
+   - 发布者：`ExploreFrontier`状态
+   - 作用：发布探索区域的代价地图数据，用于导航规划
+
+#### 订阅的消息
+
+1. **`/detected_boxes`**
+   - 类型：`geometry_msgs/PoseArray`
+   - 订阅者：`DetectBoxPose`状态
+   - 作用：接收盒子检测节点发现的盒子位置信息
+   - 回调：`box_callback`，将检测到的盒子位置存储在列表中
+
+2. **`/detected_bridges`**
+   - 类型：`geometry_msgs/PoseStamped`
+   - 订阅者：`DetectBridge`状态
+   - 作用：接收桥梁检测节点发现的桥梁入口位置信息
+   - 回调：`bridge_callback`，将检测到的桥梁位置记录下来
+
+3. **`/cmd_stop`**
+   - 类型：`std_msgs/Bool`
+   - 订阅者：`NavigateToGoalAndOCR`状态
+   - 作用：接收OCR节点发送的停止信号，表示已找到目标盒子
+   - 回调：`cmd_stop_callback`，如果收到`True`，则标记任务完成并停止导航
+
+#### 触发流程
+
+1. 初始化 → 导航到探索区域
+2. 执行前沿探索，发布地图数据
+3. 触发盒子检测，接收盒子位置
+4. 导航到每个盒子并触发OCR识别
+5. 触发桥梁检测，接收桥梁位置
+6. 导航到桥梁入口
+7. 发送开桥指令并导航过桥
+8. 导航到目标区域并触发OCR，直到收到停止信号
