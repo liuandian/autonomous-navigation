@@ -1,4 +1,28 @@
 # frontier_explore
+## 概述
+该软件包提供贪婪的基于前沿的探索功能。当节点运行时，机器人将贪婪地探索其环境，直到找不到更多前沿为止。移动命令将被发送到move_base。
+
+与类似的软件包不同，explore_lite不创建自己的代价地图，这使其更易于配置且更高效（资源占用更少）。节点只需订阅nav_msgs/OccupancyGrid消息。机器人移动命令会被发送到move_base节点。
+
+节点可以进行前沿过滤，并且可以在非膨胀地图上运行。目标黑名单功能允许处理机器人无法到达的地方。
+
+## 架构
+explore_lite使用move_base进行导航。您需要运行一个正确配置的move_base节点。
+
+![explore_lite架构图](http://wiki.ros.org/explore_lite?action=AttachFile&do=get&target=architecture.svg)
+
+explore_lite订阅nav_msgs/OccupancyGrid和map_msgs/OccupancyGridUpdate消息来构建一个用于寻找前沿的地图。**您可以使用move_base发布的代价地图（例如`<move_base>/global_costmap/costmap`），也可以使用由测绘算法（SLAM）构建的`map`。**
+
+根据您的环境，您可能使用SLAM地图或move_base发布的代价地图会获得更好的结果。move_base代价地图的优势在于膨胀效果，这有助于处理一些非常小的无法探索的前沿。当您使用SLAM产生的原始地图时，应该将min_frontier_size参数设置为一个合理的数值，以处理小型前沿。有关两种设置的详细信息，请查看explore.launch和explore_costmap.launch启动文件。
+
+## 设置
+在开始尝试explore_lite之前，您需要有一个可用于导航的move_base。您应该能够通过rviz手动使用move_base进行导航。请参考navigation#Tutorials来为您的机器人设置move_base和导航栈的其余部分。
+
+您还应该能够使用move_base导航穿过地图中的未知空间。如果您将目标设置在地图的未知区域，规划和导航应该能够正常工作。对于大多数规划器，这应该默认就能工作，如果需要为navfn规划器设置此功能，请参考navfn#Parameters（但应该默认已启用）。explore_lite需要能够通过未知空间进行导航。
+
+如果您想使用move_base提供的代价地图，您需要通过设置track_unknown_space: true来启用未知空间跟踪。
+
+如果您已正确配置move_base，就可以开始尝试explore_lite。提供的explore.launch在大多数情况下应该可以直接使用，但如往常一样，您可能需要根据您的设置调整话题名称和坐标系名称。
 
 ## 调用的动作
 
