@@ -7,6 +7,7 @@
 - 已完成参数调优，适用于项目环境中的Jackal机器人
 - 包含全局和局部代价地图配置
 - 提供了基于里程计和地图两种导航模式
+- 集成了多传感器数据，包括激光雷达和点云数据
 
 ## 依赖
 本包依赖以下ROS包：
@@ -89,17 +90,26 @@ pose:
 
 ## 参数调整
 
+### 传感器配置
+在 costmap_common_params.yaml 中，已配置了两种观测源：
+- `scan`: 2D激光扫描数据，来自话题 `/front/scan`
+- `lidar`: 3D点云数据，来自话题 `/mid/points`
+
 ### TEB局部规划器关键参数
 在 teb_local_planner_params.yaml 中：
 - `max_vel_x`: 最大线速度，当前为5.0 m/s
 - `max_vel_theta`: 最大角速度，当前为2.0 rad/s
 - `min_obstacle_dist`: 避障最小距离，当前为0.25m
+- `inflation_dist`: 局部路径规划的障碍物膨胀距离，当前为0.3m
 - `weight_obstacle`: 障碍物权重，当前为50
 
 ### 代价地图参数
 调整 costmap_common_params.yaml 中的：
-- `obstacle_range`: 障碍物检测范围，当前为2.5m
+- `obstacle_range`: 障碍物检测范围，当前为4m
+- `raytrace_range`: 射线追踪范围，当前为5m
 - `inflation_radius`: 障碍物膨胀半径，当前为0.30m
+- `footprint`: 机器人轮廓，当前设置为矩形 [[-0.21, -0.165], [-0.21, 0.165], [0.21, 0.165], [0.21, -0.165]]
+- `footprint_padding`: 轮廓额外填充，当前为0.1m
 
 ## 常见问题与解决方案
 
@@ -108,6 +118,12 @@ pose:
 - 增加 `inflation_radius` 值
 - 减小 `weight_obstacle` 值使规划器更激进
 - 确保`footprint`参数设置准确
+
+### 传感器融合问题
+如果传感器数据融合不正确：
+- 检查各传感器的坐标系设置是否正确
+- 确认 `sensor_frame` 参数与实际使用的传感器一致
+- 验证传感器话题是否正确发布数据 (`rostopic echo /topic_name`)
 
 ### TF变换问题
 如出现TF相关错误：
