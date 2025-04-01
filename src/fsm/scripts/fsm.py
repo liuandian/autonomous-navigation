@@ -105,7 +105,7 @@ class DetectBoxPose(smach.State):
         # 将盒子位置保存到userdata中传递给下一个状态
         userdata.box_positions_out = self.box_positions
 
-        if not self.box_positions:
+        if not self.box_positions or len(self.box_positions) == 0:
             rospy.loginfo('未检测到盒子')
             return 'failed'
         return 'succeeded'
@@ -158,36 +158,219 @@ class NavigateToBoxAndOCR(smach.State):
 # 定义状态：桥检测任务  
 class DetectBridge(smach.State):
     def __init__(self):
-        smach.State.__init__(self, outcomes=['succeeded', 'failed'])
+        # 添加输出键bridge_entrance和bridge_exit
+        smach.State.__init__(self, 
+                            outcomes=['succeeded', 'failed'],
+                            output_keys=['bridge_entrance_out', 'bridge_exit_out'])
+        self.bridge_detection_trigger_publisher = rospy.Publisher('/bridge_detection_trigger', Bool, queue_size=10)
+        self.bridge_pose_subscriber = rospy.Subscriber('/detected_bridges', PoseStamped, self.bridge_callback)
+        self.bridge_entrance = None  # 桥入口坐标
+        self.detection_complete = False  # 检测完成标志
         
     def execute(self, userdata):
-        rospy.loginfo('执行任务二...')
-        # 任务二的代码
+        # 重置检测状态
+        self.bridge_entrance = None
+        self.detection_complete = False
+        
+        rospy.loginfo('执行桥检测任务...')
+        # 发布桥检测触发消息
+        bridge_detection_trigger_msg = Bool()
+        bridge_detection_trigger_msg.data = True
+        self.bridge_detection_trigger_publisher.publish(bridge_detection_trigger_msg)
+        rospy.loginfo('桥检测触发消息已发布')
+        
+        # 等待桥梁检测结果
+        timeout = rospy.Duration(15)  # 设置超时时间为15秒
+        start_time = rospy.Time.now()
+        
+        while not self.detection_complete and (rospy.Time.now() - start_time) < timeout:
+            rospy.sleep(0.5)
+            
+        if self.bridge_entrance is None:
+            rospy.loginfo('未检测到桥梁或检测超时')
+            return 'failed'
+        
+        # 计算出口坐标（入口坐标y值减3）
+        bridge_exit = PoseStamped()
+        bridge_exit.header = self.bridge_entrance.header
+        bridge_exit.pose.position.x = self.bridge_entrance.pose.position.x
+        bridge_exit.pose.position.y = self.bridge_entrance.pose.position.y - 3.0
+        bridge_exit.pose.orientation = self.bridge_entrance.pose.orientation
+        
+        # 将入口和出口坐标保存到userdata中传递给下一个状态
+        userdata.bridge_entrance_out = self.bridge_entrance
+        userdata.bridge_exit_out = bridge_exit
+        
+        rospy.loginfo('桥梁检测成功')
+        rospy.loginfo('桥入口坐标: x=%f, y=%f', 
+                     self.bridge_entrance.pose.position.x, 
+                     self.bridge_entrance.pose.position.y)
+        rospy.loginfo('桥出口坐标: x=%f, y=%f', 
+                     bridge_exit.pose.position.x, 
+                     bridge_exit.pose.position.y)
+        
         return 'succeeded'
     
-# 定义状态：导航到目标
-class NavigateToGoal(smach.State):
+    def bridge_callback(self, msg):
+        rospy.loginfo('检测到桥，位置：x=%f, y=%f' % (msg.pose.position.x, msg.pose.position.y))
+        self.bridge_entrance = msg
+        self.detection_complete = True
+
+# 定义状态：导航到桥入口
+class NavigateToBridgeEntrance(smach.State):
     def __init__(self):
-        smach.State.__init__(self, outcomes=['succeeded', 'failed'])
+        smach.State.__init__(self, 
+                           outcomes=['succeeded', 'failed'],
+                           input_keys=['bridge_entrance_in'],
+                           output_keys=['bridge_entrance_out', 'bridge_exit_out'])
+        self.client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
+        self.client.wait_for_server()
         
     def execute(self, userdata):
-        rospy.loginfo('执行任务三...')
-        # 任务三的代码
+        # 从userdata中获取桥梁入口坐标
+        bridge_entrance = userdata.bridge_entrance_in
+        
+        if bridge_entrance is None:
+            rospy.loginfo('缺少桥梁入口坐标信息')
+            return 'failed'
+        
+        rospy.loginfo('开始导航到桥入口...')
+        
+        # 导航到桥入口
+        rospy.loginfo('导航到桥入口: x=%f, y=%f', 
+                     bridge_entrance.pose.position.x, 
+                     bridge_entrance.pose.position.y)
+        
+        goal = MoveBaseGoal()
+        goal.target_pose = bridge_entrance
+        
+        self.client.send_goal(goal)
+        self.client.wait_for_result()
+        result = self.client.get_state()
+        
+        if result != actionlib.GoalStatus.SUCCEEDED:
+            rospy.loginfo('导航到桥入口失败')
+            return 'failed'
+        
+        rospy.loginfo('已成功到达桥入口')
+        # 传递坐标到下一个状态
+        userdata.bridge_entrance_out = bridge_entrance
+        userdata.bridge_exit_out = userdata.bridge_exit_in
+        
         return 'succeeded'
 
+# 定义状态：开桥并导航过桥
+class OpenBridgeAndNavigate(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, 
+                           outcomes=['succeeded', 'failed'],
+                           input_keys=['bridge_exit_in'])
+        self.client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
+        self.client.wait_for_server()
+        self.open_bridge_publisher = rospy.Publisher('/open_bridge', Bool, queue_size=10)
+        
+    def execute(self, userdata):
+        # 从userdata中获取桥梁出口坐标
+        bridge_exit = userdata.bridge_exit_in
+        
+        if bridge_exit is None:
+            rospy.loginfo('缺少桥梁出口坐标信息')
+            return 'failed'
+        
+        # 发送开桥指令
+        open_bridge_msg = Bool()
+        open_bridge_msg.data = True
+        self.open_bridge_publisher.publish(open_bridge_msg)
+        rospy.loginfo('已发送开桥指令')
+        
+        # 给桥梁足够的打开时间
+        rospy.sleep(3.0)
+        
+        # 导航到桥出口（过桥）
+        rospy.loginfo('开始过桥，导航到桥出口: x=%f, y=%f', 
+                     bridge_exit.pose.position.x, 
+                     bridge_exit.pose.position.y)
+        
+        goal = MoveBaseGoal()
+        goal.target_pose = bridge_exit
+        
+        self.client.send_goal(goal)
+        self.client.wait_for_result()
+        result = self.client.get_state()
+        
+        if result != actionlib.GoalStatus.SUCCEEDED:
+            rospy.loginfo('过桥失败')
+            return 'failed'
+        
+        rospy.loginfo('成功过桥')
+        return 'succeeded'
+
+# 定义状态：导航到目标并启动OCR
+class NavigateToGoalAndOCR(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['succeeded', 'failed'])
+        # 四个目标盒子的坐标：(6,0,3)，(10,0,3)，(14,0,3)，(18,0,3)
+        self.goals = [
+            (6.0, 0.0, 3.0),
+            (10.0, 0.0, 3.0),
+            (14.0, 0.0, 3.0),
+            (18.0, 0.0, 3.0)
+        ]
+        self.client = actionlib.SimpleActionClient('move_base', MoveBaseAction)
+        self.client.wait_for_server()
+        self.goal = MoveBaseGoal()
+        self.goal.target_pose.header.frame_id = "map"
+        self.goal.target_pose.header.stamp = rospy.Time.now()
+        self.ocr_trigger_publisher = rospy.Publisher('/ocr_trigger', Bool, queue_size=10)
+
+        # 一旦匹配到目标盒子，OCR节点会发布/cmd_stop
+        self.cmd_stop_subscriber = rospy.Subscriber('/cmd_stop', Bool, self.cmd_stop_callback)
+        self.cmd_stop_received = False  # 标记是否收到停止指令
+        
+    def execute(self, userdata):
+        rospy.loginfo('执行导航到目标任务...')
+        # 遍历目标坐标，依次导航
+        for goal_position in self.goals:
+            self.goal.target_pose.pose.position.x = goal_position[0]
+            self.goal.target_pose.pose.position.y = goal_position[1]
+            self.goal.target_pose.pose.orientation.w = goal_position[2]
+            
+            rospy.loginfo('导航到目标位置: x=%f, y=%f', 
+                          goal_position[0], goal_position[1])
+            self.client.send_goal(self.goal)
+            self.client.wait_for_result()
+            result = self.client.get_state()
+            
+            if result == actionlib.GoalStatus.SUCCEEDED:
+                # 启动OCR处理
+                ocr_trigger_msg = Bool()
+                ocr_trigger_msg.data = True
+                self.ocr_trigger_publisher.publish(ocr_trigger_msg)
+                rospy.sleep(2)
+                # 等待OCR处理完成
+                if self.cmd_stop_received:
+                    rospy.loginfo('OCR任务完成，停止导航')
+                    self.cmd_stop_received = False
+                    break
+                else:
+                    rospy.loginfo('OCR任务尚未完成，继续导航')
+            else:
+                rospy.loginfo('导航到目标位置失败')
+                return 'failed'
+
+        rospy.loginfo('所有目标位置导航完成')
+
+        return 'succeeded'
+    
+    def cmd_stop_callback(self, msg):
+        if msg.data== True:
+            rospy.loginfo('收到停止指令，OCR任务完成')
+            self.cmd_stop_received = True
+        else:
+            rospy.loginfo('未收到停止指令，继续等待')
 
 # 主函数
 def main():
-    # # 启动launch文件
-    # uuid = roslaunch.rlutil.get_or_generate_uuid(None, False)
-    # roslaunch.configure_logging(uuid)
-    # launch_file = "./src/fsm/launch/final.launch"
-    # launch = roslaunch.parent.ROSLaunchParent(uuid, [launch_file])
-    # launch.start()
-    # rospy.loginfo("Launch file started")
-    # # 等待ROS系统准备就绪
-    # rospy.sleep(10)
-    
     # 初始化ROS节点
     rospy.init_node('task_coordinator')
 
@@ -197,29 +380,47 @@ def main():
     # 添加状态到状态机
     with sm:
         smach.StateMachine.add('INITIALIZE', Initialize(), 
-                            #    transitions={'initialized':'NAVIGATE_TO_GOAL',
-                               transitions={'initialized':'NAVIGATE_TO_GOAL',
+                               transitions={'initialized':'NAVIGATE_TO_EXPLORATION_AREA',
+                                           'failed':'mission_failed'})
+        
+        smach.StateMachine.add('NAVIGATE_TO_EXPLORATION_AREA', NavigateToExplorationArea(), 
+                               transitions={'succeeded':'EXPLORE_FRONTIER', 
+                                           'failed':'mission_failed',
+                                           'preempted':'mission_failed'})
+        
+        smach.StateMachine.add('EXPLORE_FRONTIER', ExploreFrontier(),
+                               transitions={'succeeded':'DETECT_BOX_POSE', 
                                            'failed':'mission_failed'})
         
         smach.StateMachine.add('DETECT_BOX_POSE', DetectBoxPose(), 
-                            transitions={'succeeded':'NAVIGATE_TO_BOX_AND_OCR', 
-                                        'failed':'mission_failed'},
-                            remapping={'box_positions_out':'box_positions'})
+                               transitions={'succeeded':'NAVIGATE_TO_BOX_AND_OCR', 
+                                           'failed':'mission_failed'},
+                               remapping={'box_positions_out':'box_positions'})
         
         smach.StateMachine.add('NAVIGATE_TO_BOX_AND_OCR', NavigateToBoxAndOCR(),
-                            transitions={'succeeded':'TASK_THREE', 
-                                        'failed':'mission_failed'},
-                            remapping={'box_positions_in':'box_positions'})
+                               transitions={'succeeded':'DETECT_BRIDGE', 
+                                           'failed':'mission_failed'},
+                               remapping={'box_positions_in':'box_positions'})
         
-        smach.StateMachine.add('TASK_ONE', ExploreFrontier(),
-                               transitions={'succeeded':'TASK_TWO', 
-                                           'failed':'mission_failed'})
+        smach.StateMachine.add('DETECT_BRIDGE', DetectBridge(),
+                               transitions={'succeeded':'NAVIGATE_TO_BRIDGE_ENTRANCE', 
+                                           'failed':'mission_failed'},
+                               remapping={'bridge_entrance_out':'bridge_entrance',
+                                          'bridge_exit_out':'bridge_exit'})
         
-        smach.StateMachine.add('TASK_TWO', DetectBridge(),
-                               transitions={'succeeded':'TASK_THREE', 
-                                           'failed':'mission_failed'})
+        smach.StateMachine.add('NAVIGATE_TO_BRIDGE_ENTRANCE', NavigateToBridgeEntrance(),
+                               transitions={'succeeded':'OPEN_BRIDGE_AND_NAVIGATE', 
+                                           'failed':'mission_failed'},
+                               remapping={'bridge_entrance_in':'bridge_entrance',
+                                          'bridge_entrance_out':'bridge_entrance',
+                                          'bridge_exit_out':'bridge_exit'})
         
-        smach.StateMachine.add('TASK_THREE', NavigateToGoal(),
+        smach.StateMachine.add('OPEN_BRIDGE_AND_NAVIGATE', OpenBridgeAndNavigate(),
+                               transitions={'succeeded':'NAVIGATE_TO_GOAL_AND_OCR', 
+                                           'failed':'mission_failed'},
+                               remapping={'bridge_exit_in':'bridge_exit'})
+        
+        smach.StateMachine.add('NAVIGATE_TO_GOAL_AND_OCR', NavigateToGoalAndOCR(),
                                transitions={'succeeded':'mission_completed', 
                                            'failed':'mission_failed'})
     

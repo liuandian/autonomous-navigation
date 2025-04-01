@@ -291,6 +291,102 @@ graph LR
     class tf_base_link,tf_map,tf_odom,tf_lidar tf;
     class mission_completed,mission_failed outcome;
 ```
+## 疑难杂症
+### 目标位置盒子坐标是怎么来的？
+
+这些盒子坐标是通过查看代码中的计算公式推导出来的。具体计算过程如下：
+
+#### 源代码中的关键计算
+
+在`spawnRandomBoxes()`函数中有这样的代码（行197-202）：
+
+```cpp
+const double spacing = (MAX_X_COORD - MIN_X_COORD)/(box_labels.size() + 1);
+for (int i = 0; i < box_labels.size(); i++)
+{
+  const ignition::math::Vector3d point = ignition::math::Vector3d(spacing*(i + 1) + MIN_X_COORD, 0.0, Z_COORD);
+  // 后续代码...
+}
+```
+
+#### 使用的常量值
+
+文件顶部定义了以下常量：
+- `NUM_BOX_TYPES = 4` （表示使用4个不同类型的盒子）
+- `MIN_X_COORD = 2.0`
+- `MAX_X_COORD = 22.0`
+- `Z_COORD = 3.0`
+
+#### 计算过程
+
+1. 首先盒子类型数量取`NUM_BOX_TYPES = 4`（在第96-97行对`box_labels`向量裁剪的结果）
+2. 计算间距: `spacing = (MAX_X_COORD - MIN_X_COORD)/(box_labels.size() + 1)`
+   - `spacing = (22.0 - 2.0)/(4 + 1) = 20.0/5 = 4.0`
+3. 然后计算每个盒子的位置: `point_x = spacing*(i + 1) + MIN_X_COORD`
+
+对于4个盒子，分别是：
+- 盒子1 (i=0): `4.0*(0+1) + 2.0 = 6.0`
+- 盒子2 (i=1): `4.0*(1+1) + 2.0 = 10.0`
+- 盒子3 (i=2): `4.0*(2+1) + 2.0 = 14.0`
+- 盒子4 (i=3): `4.0*(3+1) + 2.0 = 18.0`
+
+所有盒子的Y坐标都是0.0，Z坐标都是3.0。
+
+### 随机盒子的生成规律是什么？
+通过分析提供的`object_spawner_gz_plugin.cpp`代码，得到探索区域中随机盒子的生成规律。
+
+#### 盒子生成范围和基本参数
+
+盒子生成的区域被定义为一个矩形区域，范围为：
+- X坐标范围：2.0到22.0 (MIN_X_COORD到MAX_X_COORD)
+- Y坐标范围：11.0到19.0 (MIN_Y_COORD到MAX_Y_COORD)
+- Z坐标固定为：3.0 (Z_COORD)
+
+#### 盒子的类型和数量
+
+代码中定义了几个关键变量来控制盒子的生成：
+
+1. `NUM_BOX_TYPES = 4`：将生成4种不同类型的盒子
+2. `box_labels`数组：包含可能的盒子标签（1到9之间的数字）
+3. `box_nums`数组：定义每种类型盒子的数量
+
+#### 生成过程
+
+盒子的生成过程如下：
+
+1. **随机化处理**：
+   - 使用随机设备对`box_labels`和`box_nums`进行随机洗牌
+   - 选取前`NUM_BOX_TYPES`个元素作为最终的标签和数量
+
+2. **随机盒子生成**：
+   - 按照`box_nums`数组定义的每种类型的数量生成随机盒子
+   - 盒子位置在定义的范围内随机选择
+   - 生成时确保盒子之间不会发生碰撞（最小距离为1.2单位）
+
+#### 关键规则
+
+1. **避免碰撞**：当在随机位置生成盒子时，会检查与已生成盒子的距离，确保间隔至少1.2个单位
+   ```cpp
+   for (const auto& pre_point : this->box_points)
+   {
+     const double dist = (point - pre_point).Length();
+     if (dist <= 1.2)
+     {
+       has_collision = true;
+       break;
+     }
+   }
+   ```
+
+2. **标签和数量匹配**：
+   - 每种标签类型在探索区域会生成对应数量的盒子
+   - 例如，如果选择了标签[1,3,5,7]和数量[2,1,3,1]，那么会生成2个标签为1的盒子，1个标签为3的盒子，以此类推
+
+3. **唯一解决方案**：
+   ```cpp
+   // 代码中的注释指出数量数组应该确保只有一个解决方案
+   std::vector<int> box_nums = {1, 2, 3, 4, 5}; // can contain any positive number, but make sure there's only one solution
+   ```
 
 
 ## 贡献者

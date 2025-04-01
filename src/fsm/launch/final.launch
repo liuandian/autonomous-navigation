@@ -16,6 +16,6 @@
     <include file="$(find frontier_explore)/launch/frontier_explore.launch" />
 
     <!-- Include SLAM launch file -->
-    <include file="$(find slam)/launch/fast_lio.launch" />
+    <!-- <include file="$(find slam)/launch/fast_lio.launch" /> -->
 
 </launch>
