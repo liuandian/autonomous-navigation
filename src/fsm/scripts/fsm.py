@@ -4,7 +4,7 @@ import rospy
 import smach
 import smach_ros
 from std_msgs.msg import Bool
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, PoseArray
 import actionlib
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 import roslaunch
@@ -54,25 +54,50 @@ class NavigateToExplorationArea(smach.State):
             rospy.loginfo('导航失败')
             return 'failed'
 
-# 定义状态：任务一
+# 定义状态：前沿探索任务
 class ExploreFrontier(smach.State):
     '''rostopic pub /ocr_trigger std_msgs/Bool "data: true" -1'''
     def __init__(self):
         smach.State.__init__(self, outcomes=['succeeded', 'failed'])
-        self.pub = rospy.Publisher('/ocr_trigger', Bool, queue_size=10)
+        self.ocr_trigger_publisher = rospy.Publisher('/ocr_trigger', Bool, queue_size=10)
+        self.frontier_submap_subscriber = rospy.Subscriber('/frontier_submap', PoseStamped, self.submap_callback)
+        self.detected_boxes_subscriber = rospy.Subscriber('/detected_boxes', PoseArray, self.box_callback)
         
     def execute(self, userdata):
         rospy.loginfo('执行任务一...')
         # 发布触发消息
         trigger_msg = Bool()
         trigger_msg.data = True
-        self.pub.publish(trigger_msg)
+        self.ocr_trigger_publisher.publish(trigger_msg)
         rospy.loginfo('触发消息已发布')
         # 等待OCR处理完成
         rospy.sleep(5)  # 模拟OCR处理时间
         return 'succeeded'
     
-# 定义状态：任务二  
+    def box_callback(self, msg):
+        rospy.loginfo('检测到盒子，位置：%s', msg.poses[0].position)
+        # 处理检测到的盒子位置
+        # 这里可以添加更多的处理逻辑，例如保存位置、发送到其他节点等
+        # self.pub.publish(msg)  # 发布检测到的盒子位置
+    
+# 定义状态：盒子检测任务
+class DetectBox(smach.State):
+    def __init__(self):
+        smach.State.__init__(self, outcomes=['succeeded', 'failed'])
+        self.box_subscriber = rospy.Subscriber('/detected_boxes', PoseArray, self.box_callback)
+        
+    def execute(self, userdata):
+        rospy.loginfo('执行盒子检测任务...')
+        # 这里可以添加更多的处理逻辑，例如保存位置、发送到其他节点等
+        return 'succeeded'
+    
+    def box_callback(self, msg):
+        rospy.loginfo('检测到盒子，位置：%s', msg.poses[0].position)
+        # 处理检测到的盒子位置
+        # 这里可以添加更多的处理逻辑，例如保存位置、发送到其他节点等
+        # self.pub.publish(msg)  # 发布检测到的盒子位置
+
+# 定义状态：桥检测任务  
 class DetectBridge(smach.State):
     def __init__(self):
         smach.State.__init__(self, outcomes=['succeeded', 'failed'])
@@ -82,7 +107,7 @@ class DetectBridge(smach.State):
         # 任务二的代码
         return 'succeeded'
     
-# 定义状态：任务三
+# 定义状态：导航到目标
 class NavigateToGoal(smach.State):
     def __init__(self):
         smach.State.__init__(self, outcomes=['succeeded', 'failed'])
