@@ -85,3 +85,31 @@ Initialize ──成功──→ NavigateToGoal ──成功──→ TASK_ONE �
 4. 更新相关状态的转换关系
 
 要了解更多关于SMACH状态机的信息，请访问 [ROS SMACH 教程](http://wiki.ros.org/smach/Tutorials)
+
+## 疑难杂症
+### `/move_base/global_costmap/costmap` 和 `/move_base/global_costmap/costmap_updates` 的来源是什么
+
+这两个话题都是ROS导航栈(navigation stack)中的核心组件，特别是`move_base`节点中的`global_costmap`功能生成的：
+
+#### `/move_base/global_costmap/costmap`
+
+**来源**：这个话题由`move_base`节点内部的`global_costmap`对象创建和发布。
+
+**内容**：完整的全局代价地图，是SLAM系统提供的地图与各种代价层(cost layers)叠加后的结果。
+
+**数据流**：
+1. SLAM系统(如gmapping、hector_slam、cartographer或您使用的FAST-LIO)生成基础地图，通常发布在`/map`话题上
+2. `move_base`订阅这个地图，将其作为`global_costmap`的静态层(static layer)
+3. `move_base`加入其他层(如障碍层、膨胀层等)，得到最终的全局代价地图
+4. 这个完整的地图被发布到`/move_base/global_costmap/costmap`
+
+#### `/move_base/global_costmap/costmap_updates`
+
+**来源**：同样由`move_base`节点的`global_costmap`对象创建和发布。
+
+**内容**：只包含了最近发生变化的代价地图部分，是一种增量更新机制。
+
+**数据流**：
+1. 当传感器数据导致代价地图变化时，`move_base`计算出变化的部分
+2. 这些变化被打包成一个小型OccupancyGrid消息，只包含修改过的区域
+3. 这个增量更新被发布到`/move_base/global_costmap/costmap_updates`
