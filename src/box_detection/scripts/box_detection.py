@@ -40,7 +40,7 @@ class BoxDetector:
         self.rate = rospy.Rate(10)  # 10 Hz
 
         # Subscribe to ROS topics, 第二次SLAM的2区点云
-        rospy.Subscriber("/mid/points", PointCloud2, self.pointcloud_callback)
+        rospy.Subscriber("/box_detection/points", PointCloud2, self.pointcloud_callback)
 
         # Publish detected 3D object center points
         self.pose_pub = rospy.Publisher("/detected_boxes", PoseArray, queue_size=10)
