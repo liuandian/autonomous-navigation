@@ -52,16 +52,34 @@ class Config:
     }
     
     # 禁入区域设置
-    MAP_AREA = {
+    RESTRICTED_MAP_BOUNDS = {
         'X_MIN': 0.0,    # 地图X坐标最小值
         'X_MAX': 11.0,   # 地图X坐标最大值
         'Y_MIN': 0.0,    # 地图Y坐标最小值
         'Y_MAX': 22.0,   # 地图Y坐标最大值
     }
+
+    # 探索区域设置
+    EXPLORE_MAP_BOUNDS = {
+        'X_MIN': 11.0,    # 地图X坐标最小值
+        'X_MAX': 22.0,   # 地图X坐标最大值
+        'Y_MIN': 2.0,    # 地图Y坐标最小值
+        'Y_MAX': 21.0,   # 地图Y坐标最大值
+    }
     
+    # 掩码操作设置, 如果使用的是my_map_exploration.map，则需要设置USE_EXPLORE_MASK为False
+    # 因为my_map_explore地图自带探索区域
+    # 如果想直接使用原图，可以一键设置USE_MASKED为True
+    MASKED_CONFIG = {
+        'USE_MASKED': False,  # 是否使用掩码
+        'USE_RESOLUTION': True,  # 是否使用分辨率
+        'USE_RESTRICTED_MASK': False,  # 是否使用禁入区域
+        'USE_EXPLORE_MASK': False,  # 是否使用探索区域
+    }
+
     # 探索相关设置
     EXPLORE = {
-        'FRONTIER_THRESHOLD': 3,     # 前沿点数量阈值，低于此值认为探索完成
+        'FRONTIER_THRESHOLD': 0,     # 前沿点数量阈值，低于此值认为探索完成
         'CHECK_RATE': 0.5,           # 检查频率(Hz)
     }
     
@@ -184,8 +202,8 @@ class ExploreFrontier(smach.State):
                     continue
                     
                 # 处理地图数据
-                masked_costmap = self.segment_costmap(self.costmap_msg)
-                masked_costmap_updates = self.segment_costmap_update(self.costmap_updates_msg)
+                masked_costmap = self.process_costmap(self.costmap_msg) if Config.MASKED_CONFIG['USE_MASKED'] else self.costmap_msg
+                masked_costmap_updates = self.process_costmap_updates(self.costmap_updates_msg) if Config.MASKED_CONFIG['USE_MASKED'] else self.costmap_updates_msg
                 frontier_count = self.frontier_count
             
             # 发布处理过的地图（在锁外）
@@ -222,6 +240,16 @@ class ExploreFrontier(smach.State):
                 return 'succeeded'
             
             rate.sleep()
+
+        # 停止探索
+        rospy.loginfo('停止前沿探索')
+        # 取消订阅器
+        self.costmap_subscriber.unregister()
+        self.costmap_updates_subscriber.unregister()
+        self.frontier_subscriber.unregister()
+        # 取消发布器
+        self.explore_costmap_publisher.unregister()
+        self.explore_costmap_updates_publisher.unregister()
         
         return 'succeeded'
 
@@ -246,7 +274,7 @@ class ExploreFrontier(smach.State):
             
             self.frontier_count = frontier_count
         
-    def segment_costmap(self, costmap_msg):
+    def process_costmap(self, costmap_msg):
         """处理代价地图，标记要探索的区域为自由空间，其他区域为障碍物"""
         import copy
         # 复制原始代价地图
@@ -260,44 +288,65 @@ class ExploreFrontier(smach.State):
         # 获取地图信息
         width = masked_costmap.info.width
         height = masked_costmap.info.height
-        resolution = masked_costmap.info.resolution
+        resolution = masked_costmap.info.resolution if Config.MASKED_CONFIG['USE_RESOLUTION'] else 1.0
         origin_x = masked_costmap.info.origin.position.x
         origin_y = masked_costmap.info.origin.position.y
         
-        # 计算兴趣区域的边界（地图单元格坐标）
-        x_min = int((Config.MAP_AREA['X_MIN'] ) / resolution)
-        x_max = int((Config.MAP_AREA['X_MAX'] ) / resolution)
-        y_min = int((Config.MAP_AREA['Y_MIN'] ) / resolution)
-        y_max = int((Config.MAP_AREA['Y_MAX'] ) / resolution)
+        # 计算禁入区域的边界
+        restricted_area_x_min = int((Config.RESTRICTED_MAP_BOUNDS['X_MIN'] ) / resolution)
+        restricted_area_x_max = int((Config.RESTRICTED_MAP_BOUNDS['X_MAX'] ) / resolution)
+        restricted_area_y_min = int((Config.RESTRICTED_MAP_BOUNDS['Y_MIN'] ) / resolution)
+        restricted_area_y_max = int((Config.RESTRICTED_MAP_BOUNDS['Y_MAX'] ) / resolution)
         
         # 限制索引在地图范围内
-        x_min = max(0, min(width-1, x_min))
-        x_max = max(0, min(width-1, x_max))
-        y_min = max(0, min(height-1, y_min))
-        y_max = max(0, min(height-1, y_max))
+        restricted_area_x_min = max(0, min(width-1, restricted_area_x_min))
+        restricted_area_x_max = max(0, min(width-1, restricted_area_x_max))
+        restricted_area_y_min = max(0, min(height-1, restricted_area_y_min))
+        restricted_area_y_max = max(0, min(height-1, restricted_area_y_max))
+
+        # 计算探索区域的边界
+        explore_area_x_min = int((Config.EXPLORE_MAP_BOUNDS['X_MIN'] ) / resolution)
+        explore_area_x_max = int((Config.EXPLORE_MAP_BOUNDS['X_MAX'] ) / resolution)
+        explore_area_y_min = int((Config.EXPLORE_MAP_BOUNDS['Y_MIN'] ) / resolution)
+        explore_area_y_max = int((Config.EXPLORE_MAP_BOUNDS['Y_MAX'] ) / resolution)
+
+        # 限制索引在地图范围内
+        explore_area_x_min = max(0, min(width-1, explore_area_x_min))
+        explore_area_x_max = max(0, min(width-1, explore_area_x_max))
+        explore_area_y_min = max(0, min(height-1, explore_area_y_min))
+        explore_area_y_max = max(0, min(height-1, explore_area_y_max))
         
-        rospy.loginfo('地图边界: x=[%d,%d], y=[%d,%d], 源自世界坐标: x=[%.1f,%.1f], y=[%.1f,%.1f]',
-                    x_min, x_max, y_min, y_max,
-                    Config.MAP_AREA['X_MIN'], Config.MAP_AREA['X_MAX'],
-                    Config.MAP_AREA['Y_MIN'], Config.MAP_AREA['Y_MAX'])
+        rospy.loginfo('禁入区域边界: (%d, %d) - (%d, %d)', 
+                      restricted_area_x_min, restricted_area_y_min,
+                      restricted_area_x_max, restricted_area_y_max)
+        rospy.loginfo('探索区域边界: (%d, %d) - (%d, %d)', 
+                      explore_area_x_min, explore_area_y_min,
+                      explore_area_x_max, explore_area_y_max)
         
         # 将数据转换为可变列表
         data_list = list(masked_costmap.data)
         
-        # 标记区域外为可探索区域，区域内为障碍物
+        # 标记禁入区域为障碍物，探索区域为未知，其余不变
         modified_cells = 0
         for y in range(height):
             for x in range(width):
                 idx = y * width + x
                 if idx < len(data_list):
-                    if x_min <= x <= x_max and y_min <= y <= y_max:
-                        # 在标记区域内：标记为障碍物
-                        if data_list[idx] != 100:
-                            data_list[idx] = 100
-                            modified_cells += 1
+                    if (restricted_area_x_min <= x <= restricted_area_x_max and
+                        restricted_area_y_min <= y <= restricted_area_y_max and
+                        Config.MASKED_CONFIG['USE_RESTRICTED_MASK']):
+                        # 在禁入区域内：标记为障碍物
+                        data_list[idx] = 100
+                        modified_cells += 1
+                    elif (explore_area_x_min <= x <= explore_area_x_max and 
+                          explore_area_y_min <= y <= explore_area_y_max and 
+                          Config.MASKED_CONFIG['USE_EXPLORE_MASK']):
+                        # 在探索区域内：标记为未知
+                        data_list[idx] = -1
+                        modified_cells += 1
                     else:
-                        # 在标记区域外：不变
-                        continue
+                        # 其他区域：保持原值
+                        pass
                         
         
         # 转换回元组
@@ -307,8 +356,8 @@ class ExploreFrontier(smach.State):
         
         return masked_costmap
 
-    def segment_costmap_update(self, update_msg):
-        """处理代价地图更新，设置不需要探索的区域为障碍物或未知区域，数学变换有待确认"""
+    def process_costmap_updates(self, update_msg):
+        """处理代价地图更新，设置禁入区域为障碍物，探索区域为未知"""
         import copy
         masked_update = copy.deepcopy(update_msg)
         
@@ -328,41 +377,95 @@ class ExploreFrontier(smach.State):
             return masked_update
         
         # 从完整地图中获取分辨率和原点位置
-        resolution = self.last_complete_map.info.resolution
+        resolution = self.last_complete_map.info.resolution if Config.MASKED_CONFIG['USE_RESOLUTION'] else 1.0
         origin_x = self.last_complete_map.info.origin.position.x
         origin_y = self.last_complete_map.info.origin.position.y
-        
-        # 获取禁入区域的边界
-        x_min_world = Config.MAP_AREA['X_MIN']
-        x_max_world = Config.MAP_AREA['X_MAX']
-        y_min_world = Config.MAP_AREA['Y_MIN']
-        y_max_world = Config.MAP_AREA['Y_MAX']
         
         # 计算更新区域在实际世界中的绝对坐标
         update_origin_x = origin_x + x_start * resolution
         update_origin_y = origin_y + y_start * resolution
         
-        # 将世界坐标转换为局部更新区域内的索引
-        x_min_idx = int((x_min_world ) / resolution)
-        x_max_idx = int((x_max_world ) / resolution)
-        y_min_idx = int((y_min_world ) / resolution)
-        y_max_idx = int((y_max_world ) / resolution)
+        # 获取禁入区域的世界坐标边界
+        restricted_x_min_world = Config.RESTRICTED_MAP_BOUNDS['X_MIN']
+        restricted_x_max_world = Config.RESTRICTED_MAP_BOUNDS['X_MAX']
+        restricted_y_min_world = Config.RESTRICTED_MAP_BOUNDS['Y_MIN']
+        restricted_y_max_world = Config.RESTRICTED_MAP_BOUNDS['Y_MAX']
         
-        # 限制索引在更新区域范围内
-        x_min_idx = max(0, min(width-1, x_min_idx))
-        x_max_idx = max(0, min(width-1, x_max_idx))
-        y_min_idx = max(0, min(height-1, y_min_idx))
-        y_max_idx = max(0, min(height-1, y_max_idx))
+        # 获取探索区域的世界坐标边界
+        explore_x_min_world = Config.EXPLORE_MAP_BOUNDS['X_MIN']
+        explore_x_max_world = Config.EXPLORE_MAP_BOUNDS['X_MAX']
+        explore_y_min_world = Config.EXPLORE_MAP_BOUNDS['Y_MIN']
+        explore_y_max_world = Config.EXPLORE_MAP_BOUNDS['Y_MAX']
+        
+        # 将世界坐标转换为更新区域内的局部坐标
+        # 首先计算这些边界在全局地图中的单元格坐标
+        restricted_x_min_global = int((restricted_x_min_world - origin_x) / resolution)
+        restricted_x_max_global = int((restricted_x_max_world - origin_x) / resolution)
+        restricted_y_min_global = int((restricted_y_min_world - origin_y) / resolution)
+        restricted_y_max_global = int((restricted_y_max_world - origin_y) / resolution)
+        
+        explore_x_min_global = int((explore_x_min_world - origin_x) / resolution)
+        explore_x_max_global = int((explore_x_max_world - origin_x) / resolution)
+        explore_y_min_global = int((explore_y_min_world - origin_y) / resolution)
+        explore_y_max_global = int((explore_y_max_world - origin_y) / resolution)
+        
+        # 然后将全局坐标转换为更新区域内的局部坐标
+        restricted_x_min_local = restricted_x_min_global - x_start
+        restricted_x_max_local = restricted_x_max_global - x_start
+        restricted_y_min_local = restricted_y_min_global - y_start
+        restricted_y_max_local = restricted_y_max_global - y_start
+        
+        explore_x_min_local = explore_x_min_global - x_start
+        explore_x_max_local = explore_x_max_global - x_start
+        explore_y_min_local = explore_y_min_global - y_start
+        explore_y_max_local = explore_y_max_global - y_start
+        
+        # 限制局部坐标在更新区域范围内
+        restricted_x_min_local = max(0, min(width-1, restricted_x_min_local))
+        restricted_x_max_local = max(0, min(width-1, restricted_x_max_local))
+        restricted_y_min_local = max(0, min(height-1, restricted_y_min_local))
+        restricted_y_max_local = max(0, min(height-1, restricted_y_max_local))
+        
+        explore_x_min_local = max(0, min(width-1, explore_x_min_local))
+        explore_x_max_local = max(0, min(width-1, explore_x_max_local))
+        explore_y_min_local = max(0, min(height-1, explore_y_min_local))
+        explore_y_max_local = max(0, min(height-1, explore_y_max_local))
+        
+        rospy.loginfo('代价地图更新: 局部禁入区域边界: (%d,%d)-(%d,%d)', 
+                    restricted_x_min_local, restricted_y_min_local,
+                    restricted_x_max_local, restricted_y_max_local)
+        rospy.loginfo('代价地图更新: 局部探索区域边界: (%d,%d)-(%d,%d)', 
+                    explore_x_min_local, explore_y_min_local,
+                    explore_x_max_local, explore_y_max_local)
 
-        # 标记区域为障碍物
-        data_list = list(masked_update.data)  # 转换为列表
-        for y in range(y_min_idx, y_max_idx+1):
-            for x in range(x_min_idx, x_max_idx+1):
-                idx = y * width + x # idx是二维坐标转换为一维索引
-                # 检查索引是否在掩码更新数据范围内
-                if 0 <= idx < len(masked_update.data):
-                    data_list[idx] = 100  # 标记为障碍物
+        # 标记区域 - 将数据转换为列表以便修改
+        data_list = list(masked_update.data)
+        modified_cells = 0
+        
+        for y in range(height):
+            for x in range(width):
+                idx = y * width + x
+                if idx < len(data_list):
+                    if (restricted_x_min_local <= x <= restricted_x_max_local and 
+                        restricted_y_min_local <= y <= restricted_y_max_local and
+                        Config.MASKED_CONFIG['USE_RESTRICTED_MASK']):
+                        # 在禁入区域内：标记为障碍物
+                        data_list[idx] = 100
+                        modified_cells += 1
+                    elif (explore_x_min_local <= x <= explore_x_max_local and 
+                        explore_y_min_local <= y <= explore_y_max_local and
+                        Config.MASKED_CONFIG['USE_EXPLORE_MASK']):
+                        # 在探索区域内：标记为未知
+                        data_list[idx] = -1
+                        modified_cells += 1
+                    else:
+                        # 其他区域：保持原值
+                        pass
+        
+        # 转换回元组并更新消息
         masked_update.data = tuple(data_list)
+        
+        rospy.loginfo('更新掩码已处理: 修改了 %d 个单元格', modified_cells)
         
         return masked_update
 
