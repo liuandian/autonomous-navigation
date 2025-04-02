@@ -356,6 +356,8 @@ class DetectBoxPose(smach.State):
             return 'failed'
     
     def box_callback(self, msg):
+        while len(msg.poses) == 0:
+            continue
         rospy.loginfo('检测到多个盒子，数量：%d', len(msg.poses))
         # 处理检测到的盒子位置
         self.box_positions = []  # 清空之前的结果
