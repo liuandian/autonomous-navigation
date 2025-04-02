@@ -9,8 +9,12 @@ import actionlib
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 import roslaunch
 from nav_msgs.msg import OccupancyGrid
-from map_msgs.msg import OccupancyGridUpdate  # 添加此行，导入正确的消息类型
+from map_msgs.msg import OccupancyGridUpdate
 from visualization_msgs.msg import MarkerArray
+
+# 可视化
+import matplotlib.pyplot as plt
+import numpy as np
 
 # ====================== 全局配置参数 ======================
 class Config:
@@ -47,12 +51,12 @@ class Config:
         'BRIDGE_OPEN': 3.0,          # 桥梁打开等待时间
     }
     
-    # 地图探索区域设置
+    # 禁入区域设置
     MAP_AREA = {
-        'X_MIN': 2.0,    # 地图X坐标最小值
-        'X_MAX': 22.0,   # 地图X坐标最大值
+        'X_MIN': 0.0,    # 地图X坐标最小值
+        'X_MAX': 11.0,   # 地图X坐标最大值
         'Y_MIN': 0.0,    # 地图Y坐标最小值
-        'Y_MAX': 11.0,   # 地图Y坐标最大值
+        'Y_MAX': 22.0,   # 地图Y坐标最大值
     }
     
     # 探索相关设置
@@ -149,40 +153,75 @@ class ExploreFrontier(smach.State):
         
         # 等待前沿探索启动并开始发布前沿点
         rospy.loginfo('等待前沿探索启动...')
-        # rospy.sleep(5)  # 等待5秒钟，确保前沿点开始发布
-
+        
+        # 等待地图数据就绪
         while not rospy.is_shutdown():
             with self.map_lock:
-                # 使用锁保护地图数据的访问
-                if self.costmap_msg.data == [] or self.costmap_updates_msg.data == []:
-                    rospy.loginfo('等待地图数据...')
+                has_map_data = (len(self.costmap_msg.data) > 0)
+            
+            if not has_map_data:
+                rospy.loginfo('等待地图数据...')
+                rate.sleep()
+                continue
+            
+            break  # 跳出循环，开始主处理逻辑
+        
+        # 主处理循环
+        rospy.loginfo('地图数据就绪，开始探索...')
+        
+        while not rospy.is_shutdown():
+            # 创建掩码地图，并立即释放锁
+            masked_costmap = None
+            masked_costmap_updates = None
+            frontier_count = 0
+            
+            # 使用锁保护地图数据的访问，但尽量减少持有锁的时间
+            with self.map_lock:
+                # 首先，检查地图数据是否有效
+                if len(self.costmap_msg.data) == 0:
+                    rospy.loginfo('等待有效的地图数据...')
                     rate.sleep()
                     continue
-                rospy.loginfo('收到地图数据，开始处理')
-
-                # 更新掩码代价地图
+                    
+                # 处理地图数据
                 masked_costmap = self.segment_costmap(self.costmap_msg)
                 masked_costmap_updates = self.segment_costmap_update(self.costmap_updates_msg)
-                rospy.loginfo('掩码代价地图已更新')
-                
-                self.explore_costmap_publisher.publish(masked_costmap)
-                self.explore_costmap_updates_publisher.publish(masked_costmap_updates)
-                rospy.loginfo('掩码代价地图已发布')
+                frontier_count = self.frontier_count
             
-                # 检查前沿点数量
-                rospy.loginfo('当前前沿点数量: %d (阈值: %d)', self.frontier_count, self.frontier_threshold)
-                
-                # 如果前沿点数量小于阈值，认为探索完成
-                if self.frontier_count <= self.frontier_threshold:
-                    rospy.loginfo('前沿点数量已低于阈值，探索任务完成')
-                    return 'succeeded'
-                
-                # 检查是否超时
-                if (rospy.Time.now() - explore_start_time) > self.max_explore_time:
-                    rospy.loginfo('探索任务超时，强制完成')
-                    return 'succeeded'
-                
-                rate.sleep()
+            # 发布处理过的地图（在锁外）
+            self.explore_costmap_publisher.publish(masked_costmap)
+            self.explore_costmap_updates_publisher.publish(masked_costmap_updates)
+            rospy.loginfo('掩码代价地图已发布')
+            
+            # 可视化代码也移到锁外
+            try:
+                # 将可视化部分放在单独的 try-except 中，避免影响主功能
+                width = masked_costmap.info.width
+                height = masked_costmap.info.height
+                data_2d = np.array(masked_costmap.data).reshape(height, width)
+                plt.figure(figsize=(8, 6))
+                plt.imshow(data_2d, cmap='gray', interpolation='nearest')
+                plt.colorbar(label='占用概率')
+                plt.title('掩码代价地图')
+                plt.savefig('/tmp/masked_costmap.png')
+                plt.close()  # 关闭图形，避免内存泄漏
+            except Exception as e:
+                rospy.logwarn('可视化地图时出错: %s', str(e))
+            
+            # 检查前沿点数量
+            rospy.loginfo('当前前沿点数量: %d (阈值: %d)', frontier_count, self.frontier_threshold)
+            
+            # 如果前沿点数量小于阈值，认为探索完成
+            if frontier_count <= self.frontier_threshold:
+                rospy.loginfo('前沿点数量已低于阈值，探索任务完成')
+                return 'succeeded'
+            
+            # 检查是否超时
+            if (rospy.Time.now() - explore_start_time).to_sec() > self.max_explore_time:
+                rospy.loginfo('探索任务超时，强制完成')
+                return 'succeeded'
+            
+            rate.sleep()
         
         return 'succeeded'
 
@@ -208,23 +247,28 @@ class ExploreFrontier(smach.State):
             self.frontier_count = frontier_count
         
     def segment_costmap(self, costmap_msg):
-        """处理代价地图，设置不需要探索的区域为障碍物或未知区域，数学变换有待确认"""
+        """处理代价地图，标记要探索的区域为自由空间，其他区域为障碍物"""
         import copy
         # 复制原始代价地图
         masked_costmap = copy.deepcopy(costmap_msg)
         
-        # 设置不需要探索的区域为障碍物(100)或未知区域(-1)
+        # 更新时间戳和帧 ID
+        masked_costmap.header.stamp = rospy.Time.now()
+        if masked_costmap.header.frame_id == "":
+            masked_costmap.header.frame_id = "map"
+        
+        # 获取地图信息
         width = masked_costmap.info.width
         height = masked_costmap.info.height
         resolution = masked_costmap.info.resolution
         origin_x = masked_costmap.info.origin.position.x
         origin_y = masked_costmap.info.origin.position.y
         
-        # 转换实际坐标到地图索引
-        x_min = int((2.0 - origin_x) / resolution)
-        x_max = int((22.0 - origin_x) / resolution)
-        y_min = int((0.0 - origin_y) / resolution)
-        y_max = int((11.0 - origin_y) / resolution)
+        # 计算兴趣区域的边界（地图单元格坐标）
+        x_min = int((Config.MAP_AREA['X_MIN'] ) / resolution)
+        x_max = int((Config.MAP_AREA['X_MAX'] ) / resolution)
+        y_min = int((Config.MAP_AREA['Y_MIN'] ) / resolution)
+        y_max = int((Config.MAP_AREA['Y_MAX'] ) / resolution)
         
         # 限制索引在地图范围内
         x_min = max(0, min(width-1, x_min))
@@ -232,15 +276,36 @@ class ExploreFrontier(smach.State):
         y_min = max(0, min(height-1, y_min))
         y_max = max(0, min(height-1, y_max))
         
-        # 标记区域为障碍物
-        data_list = list(masked_costmap.data)  # 转换为列表
-        for y in range(y_min, y_max+1):
-            for x in range(x_min, x_max+1):
+        rospy.loginfo('地图边界: x=[%d,%d], y=[%d,%d], 源自世界坐标: x=[%.1f,%.1f], y=[%.1f,%.1f]',
+                    x_min, x_max, y_min, y_max,
+                    Config.MAP_AREA['X_MIN'], Config.MAP_AREA['X_MAX'],
+                    Config.MAP_AREA['Y_MIN'], Config.MAP_AREA['Y_MAX'])
+        
+        # 将数据转换为可变列表
+        data_list = list(masked_costmap.data)
+        
+        # 标记区域外为可探索区域，区域内为障碍物
+        modified_cells = 0
+        for y in range(height):
+            for x in range(width):
                 idx = y * width + x
-                if idx < len(masked_costmap.data):
-                    data_list[idx] = 100  # 标记为障碍物
-        masked_costmap.data = tuple(data_list)  # 转换回元组
-        return masked_costmap          
+                if idx < len(data_list):
+                    if x_min <= x <= x_max and y_min <= y <= y_max:
+                        # 在标记区域内：标记为障碍物
+                        if data_list[idx] != 100:
+                            data_list[idx] = 100
+                            modified_cells += 1
+                    else:
+                        # 在标记区域外：不变
+                        continue
+                        
+        
+        # 转换回元组
+        masked_costmap.data = tuple(data_list)
+        
+        rospy.loginfo('掩码代价地图处理完成: 修改了 %d 个单元格', modified_cells)
+        
+        return masked_costmap
 
     def segment_costmap_update(self, update_msg):
         """处理代价地图更新，设置不需要探索的区域为障碍物或未知区域，数学变换有待确认"""
@@ -267,7 +332,7 @@ class ExploreFrontier(smach.State):
         origin_x = self.last_complete_map.info.origin.position.x
         origin_y = self.last_complete_map.info.origin.position.y
         
-        # 获取感兴趣区域的边界（实际世界坐标）
+        # 获取禁入区域的边界
         x_min_world = Config.MAP_AREA['X_MIN']
         x_max_world = Config.MAP_AREA['X_MAX']
         y_min_world = Config.MAP_AREA['Y_MIN']
@@ -278,22 +343,23 @@ class ExploreFrontier(smach.State):
         update_origin_y = origin_y + y_start * resolution
         
         # 将世界坐标转换为局部更新区域内的索引
-        x_min_idx = int((x_min_world - update_origin_x) / resolution)
-        x_max_idx = int((x_max_world - update_origin_x) / resolution)
-        y_min_idx = int((y_min_world - update_origin_y) / resolution)
-        y_max_idx = int((y_max_world - update_origin_y) / resolution)
+        x_min_idx = int((x_min_world ) / resolution)
+        x_max_idx = int((x_max_world ) / resolution)
+        y_min_idx = int((y_min_world ) / resolution)
+        y_max_idx = int((y_max_world ) / resolution)
         
         # 限制索引在更新区域范围内
         x_min_idx = max(0, min(width-1, x_min_idx))
         x_max_idx = max(0, min(width-1, x_max_idx))
         y_min_idx = max(0, min(height-1, y_min_idx))
         y_max_idx = max(0, min(height-1, y_max_idx))
-        
+
         # 标记区域为障碍物
         data_list = list(masked_update.data)  # 转换为列表
         for y in range(y_min_idx, y_max_idx+1):
             for x in range(x_min_idx, x_max_idx+1):
-                idx = y * width + x
+                idx = y * width + x # idx是二维坐标转换为一维索引
+                # 检查索引是否在掩码更新数据范围内
                 if 0 <= idx < len(masked_update.data):
                     data_list[idx] = 100  # 标记为障碍物
         masked_update.data = tuple(data_list)
@@ -336,7 +402,7 @@ class DetectBoxPose(smach.State):
             start_time = rospy.Time.now()
             rate = rospy.Rate(2)  # 2Hz检查频率
             
-            while (rospy.Time.now() - start_time) < self.detection_timeout:
+            while (rospy.Time.now() - start_time).to_sec() < self.detection_timeout:
                 if self.box_positions:
                     break
                 rate.sleep()
@@ -468,7 +534,7 @@ class DetectBridge(smach.State):
             start_time = rospy.Time.now()
             
             rate = rospy.Rate(2)  # 2Hz检查频率
-            while not self.detection_complete and (rospy.Time.now() - start_time) < timeout:
+            while not self.detection_complete and (rospy.Time.now() - start_time).to_sec() < timeout:
                 rate.sleep()
                 
             if self.bridge_entrance is None:
@@ -697,7 +763,7 @@ class NavigateToGoalAndOCR(smach.State):
                     wait_start_time = rospy.Time.now()
                     rate = rospy.Rate(2)  # 2Hz检查频率
                     
-                    while (rospy.Time.now() - wait_start_time) < self.ocr_timeout:
+                    while (rospy.Time.now() - wait_start_time).to_sec() < self.ocr_timeout:
                         if self.cmd_stop_received:
                             rospy.loginfo('OCR任务完成，停止导航')
                             self.cmd_stop_received = False
