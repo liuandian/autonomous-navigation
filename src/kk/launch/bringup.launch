@@ -1,0 +1,16 @@
+<launch>
+
+
+
+    <!-- cartographer -->
+    <!-- <include file="$(find me5413_world)/launch/world.launch" /> -->
+    <include file="$(find kk)/launch/my.launch" />
+    <!-- <include file="$(find kk)/launch/move_base.launch" /> -->
+   
+
+
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find kk)/rviz/robot_slam.rviz"/>
+
+
+
+</launch>

@@ -1,0 +1,14 @@
+<launch>
+ 
+   
+    <arg name="map_file" default="$(find kk)/map/race.yaml" />
+    <node pkg="map_server" name="map_server" type="map_server" args="$(arg map_file)" />
+
+    <include file="$(find kk)/launch/amcl.launch" />
+    
+    <include file="$(find kk)/launch/move_base.launch" />
+
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find kk)/rviz/robot_slam.rviz"/>
+
+
+</launch>
