@@ -44,12 +44,15 @@ class Config:
     TIMEOUTS = {
         'INIT': 10.0,                # 初始化超时
         'EXPLORE': 300.0,            # 探索任务超时
-        'BOX_DETECTION': 15.0,       # 盒子检测超时
+        'BOX_DETECTION': 3.0,       # 盒子检测超时
         'BRIDGE_DETECTION': 15.0,    # 桥梁检测超时
         'NAVIGATION': 60.0,          # 导航超时
         'OCR_PROCESSING': 5.0,       # OCR处理超时
         'BRIDGE_OPEN': 3.0,          # 桥梁打开等待时间
     }
+
+    # 障碍物阈值
+    OBSTACLE_THRESHOLD = 99  # 动态调整的初始阈值
     
     # 禁入区域设置
     RESTRICTED_MAP_BOUNDS = {
@@ -61,19 +64,19 @@ class Config:
 
     # 探索区域设置
     EXPLORE_MAP_BOUNDS = {
-        'X_MIN': 11.0,    # 地图X坐标最小值
-        'X_MAX': 22.0,   # 地图X坐标最大值
-        'Y_MIN': 2.0,    # 地图Y坐标最小值
-        'Y_MAX': 21.0,   # 地图Y坐标最大值
+        'X_MIN': 9.0,    # 地图X坐标最小值
+        'X_MAX': 19.0,   # 地图X坐标最大值
+        'Y_MIN': -22.0,    # 地图Y坐标最小值
+        'Y_MAX': -2.0,   # 地图Y坐标最大值
     }
     
     # 掩码操作设置, 如果使用的是my_map_exploration.map，则需要设置USE_EXPLORE_MASK为False
     # 因为my_map_explore地图自带探索区域
     # 如果想直接使用原图，可以一键设置USE_MASKED为True
     MASKED_CONFIG = {
-        'USE_MASKED': False,  # 是否使用掩码
+        'USE_MASKED': True,  # 是否使用掩码
         'USE_RESOLUTION': True,  # 是否使用分辨率
-        'USE_RESTRICTED_MASK': False,  # 是否使用禁入区域
+        'USE_RESTRICTED_MASK': True,  # 是否使用禁入区域
         'USE_EXPLORE_MASK': False,  # 是否使用探索区域
     }
 
@@ -148,6 +151,7 @@ class ExploreFrontier(smach.State):
             OccupancyGridUpdate,  # 使用正确的消息类型
             queue_size=10
         )        
+        
         # 添加前沿点订阅器 - 监听explore_lite发布的前沿点可视化
         self.frontier_subscriber = rospy.Subscriber(
             Config.TOPICS['FRONTIERS'], 
@@ -471,69 +475,255 @@ class ExploreFrontier(smach.State):
 
 # 定义状态：盒子位置检测任务
 class DetectBoxPose(smach.State):
-    def __init__(self):
-        # 添加输出键box_positions
-        smach.State.__init__(self, 
-                            outcomes=['succeeded', 'failed'],
-                            output_keys=['box_positions_out'])
-        self.box_detection_trigger_publisher = rospy.Publisher(
-            Config.TOPICS['BOX_DETECTION_TRIGGER'], 
-            Bool, 
-            queue_size=10
+    def __init__(self):      
+        smach.State.__init__(self, outcomes=['succeeded', 'failed'], 
+                             output_keys=['box_positions_out'])
+        
+        # 添加全局代价地图订阅
+        self.costmap_subscriber = rospy.Subscriber(
+            Config.TOPICS['GLOBAL_COSTMAP'], 
+            OccupancyGrid, 
+            self.costmap_callback
         )
-        self.box_pose_subscriber = rospy.Subscriber(
+        # 添加盒子位置发布器
+        self.box_publisher = rospy.Publisher(
             Config.TOPICS['DETECTED_BOXES'], 
             PoseArray, 
-            self.box_callback
+            queue_size=10
         )
+        # 添加盒子生成区域发布器
+        self.box_area_publisher = rospy.Publisher(
+            '/box_area', 
+            MarkerArray, 
+            queue_size=10
+        )
+
         self.box_positions = []  # 用于存储检测到的盒子位置
         self.detection_timeout = Config.TIMEOUTS['BOX_DETECTION']
-
+        self.costmap = None  # 存储最新的代价地图
+               
     def execute(self, userdata):
         # 重置盒子位置列表
         self.box_positions = []
 
         rospy.loginfo('执行盒子检测任务...')
         try:
-            # 发布盒子检测触发消息
-            box_detection_trigger_msg = Bool()
-            box_detection_trigger_msg.data = True
-            self.box_detection_trigger_publisher.publish(box_detection_trigger_msg)
-            rospy.loginfo('盒子检测触发消息已发布')
-            
-            # 等待盒子检测结果
-            start_time = rospy.Time.now()
-            rate = rospy.Rate(2)  # 2Hz检查频率
-            
-            while (rospy.Time.now() - start_time).to_sec() < self.detection_timeout:
-                if self.box_positions:
-                    break
-                rate.sleep()
-                
-            # 将盒子位置保存到userdata中传递给下一个状态
-            userdata.box_positions_out = self.box_positions
+            # 使用代价地图检测盒子
+            rospy.loginfo('使用代价地图进行盒子检测...')
+            costmap_boxes = self.detect_boxes_from_costmap()
 
-            if not self.box_positions or len(self.box_positions) == 0:
-                rospy.logwarn('未检测到盒子或检测超时')
-                return 'failed'
+            # 如果检测到盒子，保存到userdata中
+            if costmap_boxes:
+                self.box_positions = costmap_boxes
+                # 将盒子姿态数组创建为PoseArray，便于传递
+                pose_array = PoseArray()
+                pose_array.header.frame_id = "map"
+                pose_array.header.stamp = rospy.Time.now()
+                pose_array.poses = [box.pose for box in costmap_boxes]
+                userdata.box_positions_out = pose_array
+                rospy.loginfo('成功从代价地图检测到%d个盒子', len(costmap_boxes))
                 
-            rospy.loginfo('成功检测到%d个盒子', len(self.box_positions))
-            return 'succeeded'
-            
+                # 发布检测到的盒子位置
+                self.box_publisher.publish(pose_array)
+                return 'succeeded'
+            else:
+                rospy.logwarn('从代价地图未检测到盒子')
+                return 'failed'
+        
         except Exception as e:
             rospy.logerr('盒子检测错误: %s', str(e))
-            return 'failed'
-    
-    def box_callback(self, msg):
-        while len(msg.poses) == 0:
-            continue
-        rospy.loginfo('检测到多个盒子，数量：%d', len(msg.poses))
-        # 处理检测到的盒子位置
-        self.box_positions = []  # 清空之前的结果
-        for pose in msg.poses:
-            rospy.loginfo('盒子位置：x=%.2f, y=%.2f', pose.position.x, pose.position.y)
-            # 保存盒子位置到列表中
-            self.box_positions.append(pose)
+            return 'failed'    
+       
+    def costmap_callback(self, msg):
+        """处理接收到的代价地图"""
+        self.costmap = msg
+        rospy.loginfo('接收到代价地图，大小: %d x %d',
+                      msg.info.width, msg.info.height)
+        rospy.loginfo('地图分辨率: %.2f m/pixel', msg.info.resolution)
+        rospy.loginfo('地图原点: (%.2f, %.2f)',
+                      msg.info.origin.position.x, msg.info.origin.position.y)
+        rospy.loginfo('地图坐标系: %s', msg.header.frame_id)
+        rospy.loginfo('地图时间戳: %s', msg.header.stamp)
+        rospy.loginfo('地图内容: %s', msg.data)
+
+    def detect_boxes_from_costmap(self):
+        """从代价地图中提取盒子位置"""
+        if self.costmap is None:
+            rospy.logwarn("无法从代价地图检测盒子：代价地图未接收")
+            return []
+            
+        # 将代价地图转换为numpy数组进行处理
+        rospy.loginfo('正在处理代价地图以检测盒子...')
+        width = self.costmap.info.width
+        height = self.costmap.info.height
+        resolution = self.costmap.info.resolution
+        origin_x = self.costmap.info.origin.position.x
+        origin_y = self.costmap.info.origin.position.y
+        rospy.loginfo('代价地图分辨率: %.2f m/pixel', resolution)
+        rospy.loginfo('代价地图原点: (%.2f, %.2f)', origin_x, origin_y)
+        
+        # 将一维数组转为二维网格
+        grid = np.array(self.costmap.data).reshape((height, width))
+        
+        # 检测高占用值区域（障碍物/盒子）
+        obstacle_threshold = Config.OBSTACLE_THRESHOLD
+        obstacles = np.where(grid > obstacle_threshold)
+        
+        # 聚类 - 使用简单的基于距离的聚类
+        from sklearn.cluster import DBSCAN
+        
+        # 如果没有障碍物点，返回空列表
+        if len(obstacles[0]) == 0:
+            rospy.logwarn("未检测到障碍物点")
+            return []
+        else:
+            rospy.loginfo("检测到 %d 个障碍物点", len(obstacles[0]))
+            
+        # 将障碍物点转换为坐标点列表
+        points = np.column_stack([obstacles[1], obstacles[0]])  # x对应列，y对应行
+        
+        # 使用DBSCAN进行聚类
+        clustering = DBSCAN(eps=5, min_samples=10).fit(points)
+        labels = clustering.labels_
+        
+        # 计算每个聚类的中心点
+        box_positions = []
+        unique_labels = set(labels)
+        for label in unique_labels:
+            # 跳过噪声点（标签为-1）
+            if label == -1:
+                continue
+                
+            # 获取当前聚类的所有点
+            cluster_points = points[labels == label]
+            
+            # 计算聚类中心
+            center_x = np.mean(cluster_points[:, 0])
+            center_y = np.mean(cluster_points[:, 1])
+            
+            # 将中心点转换为地图坐标
+            map_x = center_x * resolution + origin_x
+            map_y = center_y * resolution + origin_y
+            
+            # 创建姿态消息
+            pose = PoseStamped()
+            pose.header.frame_id = "map"
+            pose.header.stamp = rospy.Time.now()
+            pose.pose.position.x = map_x
+            pose.pose.position.y = map_y
+            pose.pose.position.z = 0.0
+            # 默认朝向，方向为正前方
+            pose.pose.orientation.w = 1.0
+            
+            # 只检测探索区的盒子
+            rospy.loginfo('盒子位置: x=%.2f, y=%.2f', map_x, map_y)
+            
+            # 发布探索区域
+            self.publish_explore_area()
+
+            # 检查盒子是否在探索区域内
+            rospy.loginfo('检查盒子是否在探索区域内...')
+            if (Config.EXPLORE_MAP_BOUNDS['X_MIN'] <= map_x <= Config.EXPLORE_MAP_BOUNDS['X_MAX'] and
+                Config.EXPLORE_MAP_BOUNDS['Y_MIN'] <= map_y <= Config.EXPLORE_MAP_BOUNDS['Y_MAX']):
+                box_positions.append(pose)
+                rospy.loginfo(f"从代价地图检测到盒子: x={map_x:.2f}, y={map_y:.2f}")
+            else:
+                rospy.loginfo(
+                    f"盒子位置x={map_x:.2f}, y={map_y:.2f}超出探索区域范围{Config.EXPLORE_MAP_BOUNDS['X_MIN']:.2f}~{Config.EXPLORE_MAP_BOUNDS['X_MAX']:.2f}, {Config.EXPLORE_MAP_BOUNDS['Y_MIN']:.2f}~{Config.EXPLORE_MAP_BOUNDS['Y_MAX']:.2f}")
+        return box_positions
+
+    def publish_explore_area(self):
+        """发布探索区域的可视化标记"""
+        from visualization_msgs.msg import Marker, MarkerArray
+        from std_msgs.msg import ColorRGBA
+        from geometry_msgs.msg import Point
+        
+        # 创建标记数组
+        marker_array = MarkerArray()
+        
+        # 创建区域边界标记
+        marker = Marker()
+        marker.header.frame_id = "map"
+        marker.header.stamp = rospy.Time.now()
+        marker.ns = "explore_area"
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.1  # 线宽
+        
+        # 设置标记颜色为绿色，透明度为0
+        marker.color = ColorRGBA(0.0, 1.0, 0.0, 0.0)  # R, G, B, A
+        
+        # 添加探索区域的四个角点，形成闭环
+        points = []
+        # 左下角
+        p1 = Point()
+        p1.x = Config.EXPLORE_MAP_BOUNDS['X_MIN']
+        p1.y = Config.EXPLORE_MAP_BOUNDS['Y_MIN']
+        p1.z = 0.1  # 略高于地面
+        points.append(p1)
+        
+        # 右下角
+        p2 = Point()
+        p2.x = Config.EXPLORE_MAP_BOUNDS['X_MAX']
+        p2.y = Config.EXPLORE_MAP_BOUNDS['Y_MIN']
+        p2.z = 0.1
+        points.append(p2)
+        
+        # 右上角
+        p3 = Point()
+        p3.x = Config.EXPLORE_MAP_BOUNDS['X_MAX']
+        p3.y = Config.EXPLORE_MAP_BOUNDS['Y_MAX']
+        p3.z = 0.1
+        points.append(p3)
+        
+        # 左上角
+        p4 = Point()
+        p4.x = Config.EXPLORE_MAP_BOUNDS['X_MIN']
+        p4.y = Config.EXPLORE_MAP_BOUNDS['Y_MAX']
+        p4.z = 0.1
+        points.append(p4)
+        
+        # 回到起点，形成闭环
+        points.append(p1)
+        
+        marker.points = points
+        marker.lifetime = rospy.Duration(5.0)  # 标记持续显示5秒
+        
+        # 创建填充区域标记
+        fill_marker = Marker()
+        fill_marker.header.frame_id = "map"
+        fill_marker.header.stamp = rospy.Time.now()
+        fill_marker.ns = "explore_area_fill"
+        fill_marker.id = 1
+        fill_marker.type = Marker.TRIANGLE_LIST
+        fill_marker.action = Marker.ADD
+        fill_marker.pose.orientation.w = 1.0
+        fill_marker.scale.x = 1.0
+        fill_marker.scale.y = 1.0
+        fill_marker.scale.z = 1.0
+        
+        # 设置填充颜色为浅绿色，半透明
+        fill_marker.color = ColorRGBA(0.0, 0.8, 0.2, 0.3)  # R, G, B, A
+        
+        # 创建两个三角形来填充矩形区域
+        fill_points = []
+        # 三角形1: 左下 - 右下 - 左上
+        fill_points.extend([p1, p2, p4])
+        # 三角形2: 右下 - 右上 - 左上
+        fill_points.extend([p2, p3, p4])
+        
+        fill_marker.points = fill_points
+        fill_marker.lifetime = rospy.Duration(5.0)
+        
+        # 将标记添加到数组
+        marker_array.markers.append(marker)
+        marker_array.markers.append(fill_marker)
+        
+        # 发布标记数组
+        self.box_area_publisher.publish(marker_array)
+        rospy.loginfo("已发布探索区域可视化")
 
 # 定义状态：导航至每个盒子并启动OCR
 class NavigateToBoxAndOCR(smach.State):
@@ -561,10 +751,10 @@ class NavigateToBoxAndOCR(smach.State):
             rospy.logwarn('没有盒子位置可供导航')
             return 'failed'
             
-        rospy.loginfo('导航到%d个盒子并启动OCR...', len(box_positions))
+        rospy.loginfo('导航到%d个盒子并启动OCR...', len(box_positions.poses))
         
         # 对每个盒子进行导航和OCR
-        for i, box_pose in enumerate(box_positions):
+        for i, box_pose in enumerate(box_positions.poses):
             try:
                 goal = MoveBaseGoal()
                 goal.target_pose.header.frame_id = "map"
@@ -572,7 +762,7 @@ class NavigateToBoxAndOCR(smach.State):
                 goal.target_pose.pose = box_pose
                 
                 rospy.loginfo('[%d/%d] 导航到盒子位置: x=%.2f, y=%.2f', 
-                              i+1, len(box_positions),
+                              i+1, len(box_positions.poses),
                               box_pose.position.x, box_pose.position.y)
                               
                 self.client.send_goal(goal)
@@ -902,7 +1092,7 @@ def main():
     # 添加状态到状态机
     with sm:
         smach.StateMachine.add('INITIALIZE', Initialize(), 
-                               transitions={'initialized':'EXPLORE_FRONTIER',
+                               transitions={'initialized':'EXPLORE_FRONTIER', # 暂时跳过探索
                                            'failed':'mission_failed'})
                 
         smach.StateMachine.add('EXPLORE_FRONTIER', ExploreFrontier(),
