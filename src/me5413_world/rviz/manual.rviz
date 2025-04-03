@@ -263,8 +263,8 @@ Visualization Manager:
         - Alpha: 1
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:
-            Max Value: 9.137946128845215
-            Min Value: -1.3033442497253418
+            Max Value: 8.87165641784668
+            Min Value: -0.9674386382102966
             Value: true
           Axis: X
           Channel Name: intensity
@@ -291,8 +291,8 @@ Visualization Manager:
         - Alpha: 1
           Autocompute Intensity Bounds: true
           Autocompute Value Bounds:
-            Max Value: 2.3349807262420654
-            Min Value: -0.07012072205543518
+            Max Value: 2.3339529037475586
+            Min Value: -0.06976181268692017
             Value: true
           Axis: Z
           Channel Name: intensity
@@ -320,10 +320,10 @@ Visualization Manager:
       Name: Sensing
     - Class: rviz/MarkerArray
       Enabled: true
-      Marker Topic: /bounding_boxes
+      Marker Topic: /gazebo/ground_truth/box_markers
       Name: MarkerArray
       Namespaces:
-        {}
+        gazebo: true
       Queue Size: 100
       Value: true
     - Alpha: 1
@@ -414,7 +414,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/ThirdPersonFollower
-      Distance: 18.923311233520508
+      Distance: 32.28286361694336
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -430,9 +430,9 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.9697964787483215
+      Pitch: 0.5547963976860046
       Target Frame: base_link
-      Yaw: 2.9668142795562744
+      Yaw: 2.931814432144165
     Saved:
       - Class: rviz/ThirdPersonFollower
         Distance: 4
