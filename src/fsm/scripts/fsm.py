@@ -10,7 +10,7 @@ from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 import roslaunch
 from nav_msgs.msg import OccupancyGrid
 from map_msgs.msg import OccupancyGridUpdate
-from visualization_msgs.msg import MarkerArray
+from visualization_msgs.msg import MarkerArray, Marker
 
 # 可视化
 import matplotlib.pyplot as plt
@@ -743,27 +743,66 @@ class NavigateToBoxAndOCR(smach.State):
         self.client.wait_for_server()
         self.navigation_timeout = Config.TIMEOUTS['NAVIGATION']
         self.ocr_timeout = Config.TIMEOUTS['OCR_PROCESSING']
+
+        # 测试：添加盒子位置订阅器
+        # 直接订阅/gazebo/ground_truth/box_markers
+        self.box_positions_subscriber = rospy.Subscriber(
+            '/gazebo/ground_truth/box_markers', 
+            MarkerArray,
+            self.box_positions_callback
+        )
+        self.box_positions = None  # 用于存储盒子位置
+        self.pose_array_publisher = rospy.Publisher(
+            Config.TOPICS['DETECTED_BOXES'], 
+            PoseArray, 
+            queue_size=10
+        )
         
     def execute(self, userdata):
-        # 从userdata中获取盒子位置
-        box_positions = userdata.box_positions_in
-        if not box_positions:
+        # # 从userdata中获取盒子位置
+        # box_positions = userdata.box_positions_in
+        
+        # 测试：无userdata,改为监听盒子位置的真值
+        # 等待盒子位置数据
+        wait_timeout = rospy.Duration(10.0)  # 设置合理的超时时间
+        start_time = rospy.Time.now()
+        
+        while not self.box_positions and (rospy.Time.now() - start_time) < wait_timeout:
+            rospy.loginfo("等待接收盒子位置数据...")
+            rospy.sleep(0.5)  # 短暂休眠，避免CPU占用过高
+        
+        if not self.box_positions:
             rospy.logwarn('没有盒子位置可供导航')
             return 'failed'
             
-        rospy.loginfo('导航到%d个盒子并启动OCR...', len(box_positions.poses))
+        rospy.loginfo('导航到%d个盒子并启动OCR...', len(self.box_positions.markers))
         
+        # 创建PoseArray存储提取的姿态
+        pose_array = PoseArray()
+        pose_array.header.frame_id = "map"
+        pose_array.header.stamp = rospy.Time.now()
+
         # 对每个盒子进行导航和OCR
-        for i, box_pose in enumerate(box_positions.poses):
+        for i, marker in enumerate(self.box_positions.markers):
+            # 测试阶段需要反转y坐标
+            marker.pose.position.y = -marker.pose.position.y  # 反转y坐标
             try:
                 goal = MoveBaseGoal()
                 goal.target_pose.header.frame_id = "map"
                 goal.target_pose.header.stamp = rospy.Time.now()
-                goal.target_pose.pose = box_pose
+                goal.target_pose.pose = marker.pose
+
+                # 把pose添加到pose_array
+                pose_array.poses.append(marker.pose)
+                # 发布盒子位置
+                if pose_array.poses:
+                    self.pose_array_publisher.publish(pose_array)
+                else:
+                    rospy.logwarn('没有盒子位置可供发布')
                 
                 rospy.loginfo('[%d/%d] 导航到盒子位置: x=%.2f, y=%.2f', 
-                              i+1, len(box_positions.poses),
-                              box_pose.position.x, box_pose.position.y)
+                              i+1, len(self.box_positions.markers),
+                              marker.pose.position.x, marker.pose.position.y)
                               
                 self.client.send_goal(goal)
                 
@@ -788,6 +827,11 @@ class NavigateToBoxAndOCR(smach.State):
                 
         return 'succeeded'
 
+    def box_positions_callback(self, msg):
+        """处理盒子位置订阅"""
+        # rospy.loginfo('接收到盒子位置消息，数量: %d', len(msg.markers))
+        # 保存位置
+        self.box_positions = msg
 # 定义状态：桥检测任务  
 class DetectBridge(smach.State):
     def __init__(self):
@@ -823,11 +867,10 @@ class DetectBridge(smach.State):
             rospy.loginfo('桥检测触发消息已发布')
             
             # 等待桥梁检测结果
-            timeout = rospy.Duration(self.detection_timeout)
             start_time = rospy.Time.now()
             
             rate = rospy.Rate(2)  # 2Hz检查频率
-            while not self.detection_complete and (rospy.Time.now() - start_time).to_sec() < timeout:
+            while not self.detection_complete and (rospy.Time.now() - start_time).to_sec() < self.detection_timeout:
                 rate.sleep()
                 
             if self.bridge_entrance is None:
@@ -1092,17 +1135,17 @@ def main():
     # 添加状态到状态机
     with sm:
         smach.StateMachine.add('INITIALIZE', Initialize(), 
-                               transitions={'initialized':'EXPLORE_FRONTIER', # 暂时跳过探索
+                               transitions={'initialized':'NAVIGATE_TO_BOX_AND_OCR', # 暂时跳过探索
                                            'failed':'mission_failed'})
                 
-        smach.StateMachine.add('EXPLORE_FRONTIER', ExploreFrontier(),
-                               transitions={'succeeded':'DETECT_BOX_POSE', 
-                                           'failed':'mission_failed'})
+        # smach.StateMachine.add('EXPLORE_FRONTIER', ExploreFrontier(),
+        #                        transitions={'succeeded':'DETECT_BOX_POSE', 
+        #                                    'failed':'mission_failed'})
         
-        smach.StateMachine.add('DETECT_BOX_POSE', DetectBoxPose(), 
-                               transitions={'succeeded':'NAVIGATE_TO_BOX_AND_OCR', 
-                                           'failed':'mission_failed'},
-                               remapping={'box_positions_out':'box_positions'})
+        # smach.StateMachine.add('DETECT_BOX_POSE', DetectBoxPose(), 
+        #                        transitions={'succeeded':'NAVIGATE_TO_BOX_AND_OCR', 
+        #                                    'failed':'mission_failed'},
+        #                        remapping={'box_positions_out':'box_positions'})
         
         smach.StateMachine.add('NAVIGATE_TO_BOX_AND_OCR', NavigateToBoxAndOCR(),
                                transitions={'succeeded':'DETECT_BRIDGE', 
