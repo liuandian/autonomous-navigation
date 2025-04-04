@@ -24,9 +24,6 @@ int main(int argc, char** argv)
         // {2, 4.0, 7.519,1.57},
         // {3, 1.308, -7.952,1.57},
         // {4,-3.203, -8.422,1.57}
-      
-       
-     
     };
 
     MoveBaseClient ac("move_base", true);
