@@ -56,10 +56,10 @@ det_image_pub = rospy.Publisher("/ultralytics/detection/image", Image, queue_siz
 def callback(data):
     """Callback function to process image and publish annotated images."""
     array = ros_numpy.numpify(data)                     # ROS image to NumPy
-    rgb_img = cv2.cvtColor(array, cv2.COLOR_BGR2RGB)    # ✅ 加这一步！
+    rgb_img = cv2.cvtColor(array, cv2.COLOR_BGR2RGB)    
 
     if det_image_pub.get_num_connections():
-        det_result = detection_model(rgb_img)           # ✅ 用 RGB 图像推理
+        det_result = detection_model(rgb_img)           # 用 RGB 图像推理
         det_annotated = det_result[0].plot(show=False)
 
         # 反转回来给 RViz 显示（RViz 默认要 BGR）

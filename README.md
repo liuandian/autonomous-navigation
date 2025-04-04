@@ -62,7 +62,7 @@ sudo apt install ros-noetic-dwa-local-planner
 
 #Build the workspace
 cd ME5413_Final_Project
-catkin build pkg1
+catkin build 
 
 #source 
 source devel/setup.bash
