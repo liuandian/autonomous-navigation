@@ -28,6 +28,8 @@ Panels:
     Name: Time
     SyncMode: 0
     SyncSource: Image
+  - Class: rviz_panel::ME5413ControlPanel
+    Name: ME5413ControlPanel
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
