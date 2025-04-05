@@ -109,14 +109,15 @@ def image_callback(img_msg):
 
                 try:
                     # Transform the center point to the world frame
-                    transform_world = tf_buffer.lookup_transform("base_link", "velodyne", rospy.Time(0), rospy.Duration(1.0))
+                    transform_world = tf_buffer.lookup_transform("map", "velodyne", rospy.Time(0), rospy.Duration(1.0))
                     center_world = tf2_geometry_msgs.do_transform_point(center_pt, transform_world)
                     rospy.loginfo(f"Digit [{text}] Box center at world: ({center_world.point.x:.2f}, {center_world.point.y:.2f}, {center_world.point.z:.2f})")
                     
                     #visualize the box center in camera frame
                     center_camera = tf2_geometry_msgs.do_transform_point(center_pt, transform)
                     x, y, z = center_camera.point.x, center_camera.point.y, center_camera.point.z
-                    if z > 0:  # 确保点在相机前方
+                    # Check if the point is in front of the camera
+                    if z > 0:  
                         uv = camera_intrinsics @ np.array([x, y, z]) / z
                         u, v = int(uv[0]), int(uv[1])
                                
@@ -130,9 +131,9 @@ def image_callback(img_msg):
                     #             (u_center, v_center - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
                     
                     # Draw the num center point
-                    cv2.circle(img_rgb, (u_center, v_center), 5, (255, 255, 255), -1)  # 白色圆点
+                    cv2.circle(img_rgb, (u_center, v_center), 5, (255, 255, 255), -1)  # white
             #         cv2.putText(img_rgb, f"({u_center}, {v_center})", (u_center + 10, v_center - 10),
-            # cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)  # 显示坐标
+            # cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)  
                 except Exception as e:
                     rospy.logerr(f"World transform failed: {str(e)}")
             else:
