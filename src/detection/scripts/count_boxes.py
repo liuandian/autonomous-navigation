@@ -13,6 +13,7 @@ from sklearn.decomposition import PCA
 rospy.init_node("ocr_lidar_box_center_node")
 
 ocr_reader = easyocr.Reader(['en'], gpu=False)
+rospy.loginfo("EasyOCR initialized. Using GPU: {}".format(ocr_reader.device == 'cuda'))
 tf_buffer = tf2_ros.Buffer()
 tf_listener = tf2_ros.TransformListener(tf_buffer)
 
