@@ -14,7 +14,7 @@ import time
 
 rospy.init_node("ocr_lidar_box_center_node")
 
-# 1️⃣ GPU enabled for EasyOCR
+
 ocr_reader = easyocr.Reader(['en'], gpu=True)
 rospy.loginfo("EasyOCR initialized. Using GPU: {}".format(ocr_reader.device == 'cuda'))
 
@@ -51,7 +51,7 @@ def adjust_normal_direction(normal_vector, box_center_point):
         normal_vector = -normal_vector  
     return normal_vector
 
-# 6️⃣ Reduce TF lookup frequency
+# Reduce TF lookup frequency
 def update_transform():
     global transform, last_tf_update
     now = rospy.Time.now()
@@ -84,15 +84,15 @@ def image_callback(img_msg):
     img = ros_numpy.numpify(img_msg)
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-    # 2️⃣ Vectorized point transformation
+    # Vectorized point transformation
     lidar_cam = transform_points(lidar_points, transform)
 
-    # 3️⃣ Pre-filter points to front of camera
+    # Pre-filter points to front of camera
     valid_indices = lidar_cam[:, 2] > 0
     lidar_cam = lidar_cam[valid_indices]
     lidar_filtered = lidar_points[valid_indices]
 
-    # 4️⃣ Vectorized projection
+    # Vectorized projection
     uv = (camera_intrinsics @ lidar_cam.T).T
     uv[:, :2] /= lidar_cam[:, 2:3]
     uv = uv[:, :2].astype(int)
@@ -101,7 +101,7 @@ def image_callback(img_msg):
 
     for bbox, text, conf in results:
         if conf > 0.5 and text.strip() in "123456789":
-            rospy.loginfo(f"Detected text: {text} with confidence: {conf}")
+            #rospy.loginfo(f"Detected text: {text} with confidence: {conf}")
             bbox = np.array(bbox, dtype=int)
             u_center = int(np.mean(bbox[:, 0]))
             v_center = int(np.mean(bbox[:, 1]))
