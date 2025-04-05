@@ -129,6 +129,7 @@ catkin_install_python(PROGRAMS
   scripts/count_boxes.py
   scripts/yolov11.py
   scripts/ocr_only_node.py
+  scripts/count_boxes.speedup.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
