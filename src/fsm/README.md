@@ -70,6 +70,117 @@ Initialize ──成功──→ NavigateToGoal ──成功──→ TASK_ONE �
               mission_failed
 ```
 
+## 数据流
+### box_position 在任务状态机中的传递流程分析
+
+`box_position` 在您的状态机中的传递是通过 SMACH 状态机框架的 `userdata` 机制实现的。让我梳理一下它的完整流程：
+
+#### 1. 数据的产生 - DetectBoxPose 状态
+
+在 `DetectBoxPose` 状态中，通过以下步骤生成 `box_positions`：
+
+1. 从代价地图提取障碍物信息
+2. 使用 DBSCAN 聚类算法对障碍物点进行聚类
+3. 计算每个聚类的中心点，将其转换为地图坐标系下的位置
+4. 根据配置的探索区域边界，过滤出位于探索区域内的盒子
+5. 将检测到的盒子位置包装成 `PoseArray` 消息
+
+关键代码：
+```python
+# 将盒子姿态数组创建为PoseArray，便于传递
+pose_array = PoseArray()
+pose_array.header.frame_id = "map"
+pose_array.header.stamp = rospy.Time.now()
+pose_array.poses = [box.pose for box in costmap_boxes]
+userdata.box_positions_out = pose_array
+```
+
+#### 2. 数据的输出定义
+
+在 `DetectBoxPose` 状态的初始化中声明了输出键：
+```python
+smach.State.__init__(self, outcomes=['succeeded', 'failed'], 
+                     output_keys=['box_positions_out'])
+```
+
+#### 3. 状态机中的数据映射
+
+在顶层状态机中，通过 `remapping` 参数将状态之间的数据进行映射：
+```python
+smach.StateMachine.add('DETECT_BOX_POSE', DetectBoxPose(), 
+                       transitions={'succeeded':'NAVIGATE_TO_BOX_AND_OCR', 
+                                   'failed':'mission_failed'},
+                       remapping={'box_positions_out':'box_positions'})
+```
+
+这里将 `DetectBoxPose` 状态的 `box_positions_out` 输出键映射到状态机的 `box_positions` 变量。
+
+#### 4. 数据的接收 - NavigateToBoxAndOCR 状态
+
+在 `NavigateToBoxAndOCR` 状态中，通过以下方式接收盒子位置数据：
+
+```python
+smach.State.__init__(self, 
+                   outcomes=['succeeded', 'failed'], 
+                   input_keys=['box_positions_in'])
+```
+
+并在状态机中进行映射：
+```python
+smach.StateMachine.add('NAVIGATE_TO_BOX_AND_OCR', NavigateToBoxAndOCR(),
+                       transitions={'succeeded':'DETECT_BRIDGE', 
+                                   'failed':'mission_failed'},
+                       remapping={'box_positions_in':'box_positions'})
+```
+
+#### 5. 数据的使用 - NavigateToBoxAndOCR 状态中
+
+在 `NavigateToBoxAndOCR::execute` 方法中，从 `userdata` 获取盒子位置：
+```python
+# 从userdata中获取盒子位置
+self.box_positions = userdata.box_positions_in
+```
+
+然后使用这些位置数据进行导航和 OCR 处理：
+```python
+# 对每个盒子进行导航和OCR
+for i, pose in enumerate(self.box_positions.poses):
+    try:
+        self.navigate_to_best_viewing_positions(pose)
+        
+    except Exception as e:
+        rospy.logerr('处理盒子时发生错误: %s', str(e))
+```
+
+#### 6. 数据类型和格式
+
+- **数据类型**: `PoseArray` 消息类型，包含多个 `Pose` 对象
+- **结构**: 
+  - `header`: 标准消息头，包含时间戳和坐标系信息
+  - `poses[]`: 包含多个 `Pose` 对象的数组，每个对象包含位置(x,y,z)和方向(四元数)
+
+#### 7. 数据在ROS系统中的流动
+
+除了在状态机内部传递外，`box_positions` 还通过 ROS 话题发布：
+
+```python
+self.box_publisher.publish(pose_array)
+```
+
+这样可以使其他节点也能订阅和使用盒子位置信息，比如可视化工具或外部监控节点。
+
+## 总结
+
+数据流程如下：
+1. `DetectBoxPose` 从代价地图检测盒子位置
+2. 将位置包装为 `PoseArray` 并存储到 `userdata.box_positions_out`
+3. 通过状态机的 `remapping` 机制，数据被映射到状态机共享变量 `box_positions`
+4. `NavigateToBoxAndOCR` 从 `userdata.box_positions_in` 获取数据
+5. 使用这些位置导航到每个盒子并执行 OCR 处理
+6. 同时，数据通过 ROS 话题发布，方便系统中其他组件使用
+
+这种设计使各个状态能够共享数据，同时保持了状态之间的松耦合性。
+
 ## 注意事项
 
 - 代码中有注释掉的启动 launch 文件的功能，如需启用请取消相关注释

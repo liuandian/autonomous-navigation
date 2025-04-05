@@ -11,9 +11,9 @@ import roslaunch
 from nav_msgs.msg import OccupancyGrid
 from map_msgs.msg import OccupancyGridUpdate
 from visualization_msgs.msg import MarkerArray, Marker
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Point
 import math
-from std_msgs.msg import Int32
+from std_msgs.msg import Int32, ColorRGBA
 
 # 可视化
 import matplotlib.pyplot as plt
@@ -42,6 +42,9 @@ class Config:
         # 导航相关话题
         'MOVE_BASE': 'move_base',
 
+        # 盒子提取相关话题
+        # 'BOX_EXTRACTION': '/move_base/global_costmap/costmap/obstacles_layer',
+        'BOX_EXTRACTION': '/move_base/global_costmap/costmap',
         # OCR相关话题
         'RECOGNIZED_DIGIT': '/recognized_digit',
     }
@@ -89,7 +92,7 @@ class Config:
     # 因为my_map_explore地图自带探索区域
     # 如果想直接使用原图，可以一键设置USE_MASKED为True
     MASKED_CONFIG = {
-        'USE_MASKED': True,  # 是否使用掩码
+        'USE_MASKED': False,  # 是否使用掩码
         'USE_RESOLUTION': True,  # 是否使用分辨率
         'USE_RESTRICTED_MASK': True,  # 是否使用禁入区域
         'USE_EXPLORE_MASK': False,  # 是否使用探索区域
@@ -113,6 +116,15 @@ class Config:
         (14.0, 0.0, 1.0),
         (18.0, 0.0, 1.0)
     ]
+
+    # 最佳观察距离
+    VIEWING_DISTANCE = 0.7
+
+    # 观察角度
+    VIEWING_ANGLES = [0, math.pi/2, math.pi, 3*math.pi/2]  # 0°, 90°, 180°, 270°
+
+    # 盒子边长
+    BOX_SIZE = 0.5  # 米
 
 # 定义状态：初始化
 class Initialize(smach.State):
@@ -243,6 +255,7 @@ class ExploreFrontier(smach.State):
         
         # 主处理循环
         rospy.loginfo('地图数据就绪，开始探索...')
+        previous_frontier_count = self.frontier_count
         
         while (rospy.Time.now() - explore_start_time).to_sec() < self.max_explore_time:
             # 创建掩码地图，并立即释放锁
@@ -262,30 +275,14 @@ class ExploreFrontier(smach.State):
                 masked_costmap = self.process_costmap(self.costmap_msg) if Config.MASKED_CONFIG['USE_MASKED'] else self.costmap_msg
                 masked_costmap_updates = self.process_costmap_updates(self.costmap_updates_msg) if Config.MASKED_CONFIG['USE_MASKED'] else self.costmap_updates_msg
                 frontier_count = self.frontier_count
+                if previous_frontier_count != frontier_count:
+                    rospy.loginfo('前沿点数量变化: %d -> %d', previous_frontier_count, frontier_count)
+                    previous_frontier_count = frontier_count
             
             # 发布处理过的地图（在锁外）
             self.explore_costmap_publisher.publish(masked_costmap)
             self.explore_costmap_updates_publisher.publish(masked_costmap_updates)
-            rospy.loginfo('掩码代价地图已发布')
-            
-            # 可视化代码也移到锁外
-            try:
-                # 将可视化部分放在单独的 try-except 中，避免影响主功能
-                width = masked_costmap.info.width
-                height = masked_costmap.info.height
-                data_2d = np.array(masked_costmap.data).reshape(height, width)
-                plt.figure(figsize=(8, 6))
-                plt.imshow(data_2d, cmap='gray', interpolation='nearest')
-                plt.colorbar(label='占用概率')
-                plt.title('掩码代价地图')
-                plt.savefig('/tmp/masked_costmap.png')
-                plt.close()  # 关闭图形，避免内存泄漏
-            except Exception as e:
-                rospy.logwarn('可视化地图时出错: %s', str(e))
-            
-            # 检查前沿点数量
-            rospy.loginfo('当前前沿点数量: %d (阈值: %d)', frontier_count, self.frontier_threshold)
-            
+                     
             # 如果前沿点数量小于阈值，认为探索完成
             if frontier_count <= self.frontier_threshold:
                 # 取消订阅器
@@ -537,7 +534,7 @@ class DetectBoxPose(smach.State):
         
         # 添加全局代价地图订阅
         self.costmap_subscriber = rospy.Subscriber(
-            Config.TOPICS['GLOBAL_COSTMAP'], 
+            Config.TOPICS['BOX_EXTRACTION'], 
             OccupancyGrid, 
             self.costmap_callback
         )
@@ -838,36 +835,31 @@ class NavigateToBoxAndOCR(smach.State):
         self.box_positions = msg
 
     def navigate_to_best_viewing_positions(self, box_pose):
-        """计算并导航到盒子周围的最佳观察位置"""
-        # 定义4个最佳观察位置（盒子的四周）
-        viewing_angles = [0, math.pi/2, math.pi, 3*math.pi/2]  # 0°, 90°, 180°, 270°
-        viewing_distance = 0.7  # 最佳观察距离
+        """计算并导航到盒子周围的最佳观察位置"""     
+        # 计算观察位置
+        viewing_positions = self.calculate_box_viewing_positions(box_pose)
         
-        for i, angle in enumerate(viewing_angles):
-            # 计算观察位置
-            view_x = box_pose.position.x + viewing_distance * math.cos(angle)
-            view_y = box_pose.position.y + viewing_distance * math.sin(angle)
-            
-            # 修正计算朝向盒子的方向
-            # 正确计算从观察位置朝向盒子的角度
-            dx = box_pose.position.x - view_x
-            dy = box_pose.position.y - view_y
-            facing_angle = math.atan2(dy, dx)  # atan2正确的参数顺序是(y, x)
-            
+        # 发布可视化标记
+        self.visualize_box_viewing_positions(box_pose, viewing_positions)
+               
+        for i, viewing_position in enumerate(viewing_positions):
+
             # 创建朝向盒子的姿态
             goal = MoveBaseGoal()
             goal.target_pose.header.frame_id = "map"
             goal.target_pose.header.stamp = rospy.Time.now()
-            goal.target_pose.pose.position.x = view_x
-            goal.target_pose.pose.position.y = view_y
+            goal.target_pose.pose.position.x = viewing_position['position']['x']
+            goal.target_pose.pose.position.y = viewing_position['position']['y']
             goal.target_pose.pose.position.z = 0.0
             
             # 将角度转换为四元数
-            goal.target_pose.pose.orientation.z = math.sin(facing_angle / 2.0)
-            goal.target_pose.pose.orientation.w = math.cos(facing_angle / 2.0)
+            goal.target_pose.pose.orientation.z = viewing_position['orientation']['z']
+            goal.target_pose.pose.orientation.w = viewing_position['orientation']['w']
             
             rospy.loginfo('导航到盒子观察位置 [%d/4]: x=%.2f, y=%.2f, 角度=%.2f°', 
-                        i+1, view_x, view_y, math.degrees(facing_angle))
+                        i+1, viewing_position['position']['x'],
+                        viewing_position['position']['y'],
+                        math.degrees(viewing_position['angle']))
                         
             self.client.send_goal(goal)
             
@@ -896,7 +888,186 @@ class NavigateToBoxAndOCR(smach.State):
             else:
                 rospy.logwarn('OCR处理失败，尝试下一个观察位置')
                 continue
+
+    def calculate_box_viewing_positions(self, box_pose):
+        """
+        计算盒子周围的最佳观察位置
         
+        参数:
+            box_pose: 盒子的姿态，包含position和orientation
+            
+        返回:
+            viewing_positions: 包含观察位置的列表，每个位置是一个字典，包含:
+                - position: 观察位置坐标(x, y, z)
+                - orientation: 观察位置的朝向(四元数)
+                - angle: 观察角度(弧度)
+        """
+        # 定义4个最佳观察位置（盒子的四周）
+        viewing_angles = Config.VIEWING_ANGLES  # 0°, 90°, 180°, 270°
+        viewing_distance = Config.VIEWING_DISTANCE  # 最佳观察距离
+        
+        viewing_positions = []
+        
+        for i, angle in enumerate(viewing_angles):
+            # 计算观察位置
+            view_x = box_pose.position.x + viewing_distance * math.cos(angle)
+            view_y = box_pose.position.y + viewing_distance * math.sin(angle)
+            
+            # 计算朝向盒子的角度
+            dx = box_pose.position.x - view_x
+            dy = box_pose.position.y - view_y
+            facing_angle = math.atan2(dy, dx)  # atan2正确的参数顺序是(y, x)
+            
+            # 创建四元数表示朝向
+            orientation = {
+                'z': math.sin(facing_angle / 2.0),
+                'w': math.cos(facing_angle / 2.0)
+            }
+            
+            # 保存观察位置信息
+            position = {
+                'x': view_x,
+                'y': view_y,
+                'z': 0.0
+            }
+            
+            # 添加到结果列表
+            viewing_positions.append({
+                'position': position,
+                'orientation': orientation,
+                'angle': facing_angle
+            })
+        
+        return viewing_positions
+    
+    def visualize_box_viewing_positions(self, box_pose, viewing_positions):
+        """可视化盒子位置最佳观察位置标记"""
+        # 创建标记数组
+        marker_array = MarkerArray()
+
+        # 创建盒子标记
+        box_marker = Marker()
+        box_marker.header.frame_id = "map"
+        box_marker.header.stamp = rospy.Time.now()
+        box_marker.ns = "box_visualization"
+        box_marker.id = 0
+        box_marker.type = Marker.CUBE
+        box_marker.action = Marker.ADD
+        
+        # 设置盒子位置和大小
+        box_marker.pose = box_pose
+        box_marker.scale.x = Config.BOX_SIZE
+        box_marker.scale.y = Config.BOX_SIZE
+        box_marker.scale.z = Config.BOX_SIZE
+        
+        # 设置盒子颜色为红色
+        box_marker.color = ColorRGBA(1.0, 0.0, 0.0, 0.0)  # R, G, B, A
+        box_marker.lifetime = rospy.Duration(10.0)  # 显示10秒
+        
+        marker_array.markers.append(box_marker)
+        
+        # 创建观察位置标记
+        for i, viewing_position in enumerate(viewing_positions):            
+            # 创建观察位置标记
+            view_marker = Marker()
+            view_marker.header.frame_id = "map"
+            view_marker.header.stamp = rospy.Time.now()
+            view_marker.ns = "view_position"
+            view_marker.id = i + 1  # 从1开始，0是盒子
+            view_marker.type = Marker.ARROW  # 使用箭头表示机器人朝向
+            view_marker.action = Marker.ADD
+            
+            # 设置观察位置
+            view_marker.pose.position.x = viewing_position['position']['x']
+            view_marker.pose.position.y = viewing_position['position']['y']
+            view_marker.pose.position.z = 0.1  # 略高于地面
+            
+            # 设置朝向（四元数）
+            view_marker.pose.orientation.z = viewing_position['orientation']['z']
+            view_marker.pose.orientation.w = viewing_position['orientation']['w']
+            
+            # 设置箭头大小
+            view_marker.scale.x = 0.3  # 箭头长度
+            view_marker.scale.y = 0.1  # 箭头宽度
+            view_marker.scale.z = 0.1  # 箭头高度
+            
+            # 设置颜色，使用不同颜色区分四个位置
+            colors = [
+                ColorRGBA(0.0, 0.8, 0.0, 0.8),  # 绿色 - 0°
+                ColorRGBA(0.0, 0.0, 0.8, 0.8),  # 蓝色 - 90°
+                ColorRGBA(0.8, 0.8, 0.0, 0.8),  # 黄色 - 180°
+                ColorRGBA(0.8, 0.0, 0.8, 0.8)   # 紫色 - 270°
+            ]
+            view_marker.color = colors[i]
+            view_marker.lifetime = rospy.Duration(10.0)  # 显示10秒
+            
+            marker_array.markers.append(view_marker)
+            
+            # 添加连接线，从观察位置指向盒子
+            line_marker = Marker()
+            line_marker.header.frame_id = "map"
+            line_marker.header.stamp = rospy.Time.now()
+            line_marker.ns = "view_lines"
+            line_marker.id = i + 5  # 从5开始，避免ID冲突
+            line_marker.type = Marker.LINE_STRIP
+            line_marker.action = Marker.ADD
+            
+            # 添加线的起点和终点
+            start_point = Point()
+            start_point.x = viewing_position['position']['x']
+            start_point.y = viewing_position['position']['y']
+            start_point.z = 0.1
+            
+            end_point = Point()
+            end_point.x = box_pose.position.x
+            end_point.y = box_pose.position.y
+            end_point.z = 0.1
+            
+            line_marker.points = [start_point, end_point]
+            
+            # 设置线的粗细和颜色
+            line_marker.scale.x = 0.03  # 线宽
+            line_marker.color = ColorRGBA(0.5, 0.5, 0.5, 0.5)  # 灰色半透明
+            line_marker.lifetime = rospy.Duration(10.0)  # 显示10秒
+            
+            marker_array.markers.append(line_marker)
+        
+        # 创建文本标记，显示观察位置编号
+        for i, viewing_position in enumerate(viewing_positions):
+            # 创建文本标记
+            text_marker = Marker()
+            text_marker.header.frame_id = "map"
+            text_marker.header.stamp = rospy.Time.now()
+            text_marker.ns = "view_text"
+            text_marker.id = i + 9  # 避免ID冲突
+            text_marker.type = Marker.TEXT_VIEW_FACING
+            text_marker.action = Marker.ADD
+            
+            # 设置文本位置（稍高一点）
+            text_marker.pose.position.x = viewing_position['position']['x']
+            text_marker.pose.position.y = viewing_position['position']['y']
+            text_marker.pose.position.z = 0.3  # 文本高度
+            
+            # 设置文本内容和外观
+            text_marker.text = f"位置 {i+1}"
+            text_marker.scale.z = 0.2  # 文本大小
+            text_marker.color = ColorRGBA(1.0, 1.0, 1.0, 0.8)  # 白色文本
+            text_marker.lifetime = rospy.Duration(10.0)  # 显示10秒
+            
+            marker_array.markers.append(text_marker)
+        
+        # 发布标记数组
+        # 注意：需要在类中添加publisher
+        if not hasattr(self, 'view_positions_publisher'):
+            self.view_positions_publisher = rospy.Publisher(
+                '/box_view_positions', 
+                MarkerArray, 
+                queue_size=10
+            )
+        
+        self.view_positions_publisher.publish(marker_array)
+        rospy.loginfo("已发布盒子及其观察位置可视化")
+
     def ocr_result_callback(self, msg):
         self.ocr_result = msg.data
 
