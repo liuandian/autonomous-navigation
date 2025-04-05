@@ -118,13 +118,21 @@ class Config:
     ]
 
     # 最佳观察距离
-    VIEWING_DISTANCE = 0.7
+    VIEWING_DISTANCE = 1.0
 
     # 观察角度
     VIEWING_ANGLES = [0, math.pi/2, math.pi, 3*math.pi/2]  # 0°, 90°, 180°, 270°
 
     # 盒子边长
     BOX_SIZE = 0.5  # 米
+
+    # 聚类参数
+    CLUSTERING = {
+        'width': 30,
+        'height': 30,
+        'MIN_POINTS': 20,  # 最小点数
+        'MAX_POINTS': 200,  # 最大点数
+    }
 
 # 定义状态：初始化
 class Initialize(smach.State):
@@ -634,6 +642,7 @@ class DetectBoxPose(smach.State):
         # 计算每个聚类的中心点
         box_positions = []
         unique_labels = set(labels)
+
         for label in unique_labels:
             # 跳过噪声点（标签为-1）
             if label == -1:
@@ -642,39 +651,55 @@ class DetectBoxPose(smach.State):
             # 获取当前聚类的所有点
             cluster_points = points[labels == label]
             
-            # 计算聚类中心
-            center_x = np.mean(cluster_points[:, 0])
-            center_y = np.mean(cluster_points[:, 1])
+            # 计算聚类大小
+            cluster_size = len(cluster_points)
             
-            # 将中心点转换为地图坐标
-            map_x = center_x * resolution + origin_x
-            map_y = center_y * resolution + origin_y
+            # 计算聚类的边界框
+            min_x, min_y = np.min(cluster_points, axis=0)
+            max_x, max_y = np.max(cluster_points, axis=0)
+            width = max_x - min_x
+            height = max_y - min_y
             
-            # 创建姿态消息
-            pose = PoseStamped()
-            pose.header.frame_id = "map"
-            pose.header.stamp = rospy.Time.now()
-            pose.pose.position.x = map_x
-            pose.pose.position.y = map_y
-            pose.pose.position.z = 0.0
-            # 默认朝向，方向为正前方
-            pose.pose.orientation.w = 1.0
+            # 过滤条件: 盒子应该是小型紧凑的聚类
+            # 1. 聚类点数不应太多 (根据实际盒子大小调整)
+            # 2. 形状应接近正方形
+            # 3. 大小应该在合理范围内
+            if (Config.CLUSTERING['MIN_POINTS'] <= cluster_size <= Config.CLUSTERING['MAX_POINTS'] and  # 点数范围
+                width < Config.CLUSTERING['width'] and height < Config.CLUSTERING['height']):  # 大小限制(单位是格子数)
+                
+                # 计算聚类中心
+                center_x = np.mean(cluster_points[:, 0])
+                center_y = np.mean(cluster_points[:, 1])
+                
+                # 将中心点转换为地图坐标
+                map_x = center_x * resolution + origin_x
+                map_y = center_y * resolution + origin_y
             
-            # 只检测探索区的盒子
-            rospy.loginfo('盒子位置: x=%.2f, y=%.2f', map_x, map_y)
+                # 创建姿态消息
+                pose = PoseStamped()
+                pose.header.frame_id = "map"
+                pose.header.stamp = rospy.Time.now()
+                pose.pose.position.x = map_x
+                pose.pose.position.y = map_y
+                pose.pose.position.z = 0.0
+                # 默认朝向，方向为正前方
+                pose.pose.orientation.w = 1.0
+                
+                # 只检测探索区的盒子
+                rospy.loginfo('盒子位置: x=%.2f, y=%.2f', map_x, map_y)
             
-            # 发布探索区域
-            self.publish_explore_area()
+                # 发布探索区域
+                self.publish_explore_area()
 
-            # 检查盒子是否在探索区域内
-            rospy.loginfo('检查盒子是否在探索区域内...')
-            if (Config.EXPLORE_MAP_BOUNDS['X_MIN'] <= map_x <= Config.EXPLORE_MAP_BOUNDS['X_MAX'] and
-                Config.EXPLORE_MAP_BOUNDS['Y_MIN'] <= map_y <= Config.EXPLORE_MAP_BOUNDS['Y_MAX']):
-                box_positions.append(pose)
-                rospy.loginfo(f"从代价地图检测到盒子: x={map_x:.2f}, y={map_y:.2f}")
-            else:
-                rospy.loginfo(
-                    f"盒子位置x={map_x:.2f}, y={map_y:.2f}超出探索区域范围{Config.EXPLORE_MAP_BOUNDS['X_MIN']:.2f}~{Config.EXPLORE_MAP_BOUNDS['X_MAX']:.2f}, {Config.EXPLORE_MAP_BOUNDS['Y_MIN']:.2f}~{Config.EXPLORE_MAP_BOUNDS['Y_MAX']:.2f}")
+                # 检查盒子是否在探索区域内
+                rospy.loginfo('检查盒子是否在探索区域内...')
+                if (Config.EXPLORE_MAP_BOUNDS['X_MIN'] <= map_x <= Config.EXPLORE_MAP_BOUNDS['X_MAX'] and
+                    Config.EXPLORE_MAP_BOUNDS['Y_MIN'] <= map_y <= Config.EXPLORE_MAP_BOUNDS['Y_MAX']):
+                    box_positions.append(pose)
+                    rospy.loginfo(f"从代价地图检测到盒子: x={map_x:.2f}, y={map_y:.2f}")
+                else:
+                    rospy.loginfo(
+                        f"盒子位置x={map_x:.2f}, y={map_y:.2f}超出探索区域范围{Config.EXPLORE_MAP_BOUNDS['X_MIN']:.2f}~{Config.EXPLORE_MAP_BOUNDS['X_MAX']:.2f}, {Config.EXPLORE_MAP_BOUNDS['Y_MIN']:.2f}~{Config.EXPLORE_MAP_BOUNDS['Y_MAX']:.2f}")
         return box_positions
 
     def publish_explore_area(self):
@@ -1371,12 +1396,12 @@ def main():
     # 添加状态到状态机
     with sm:
         smach.StateMachine.add('INITIALIZE', Initialize(), 
-                               transitions={'initialized':'DETECT_BOX_POSE', # 暂时跳过探索
+                               transitions={'initialized':'EXPLORE_FRONTIER', # 暂时跳过探索
                                            'failed':'mission_failed'})
                 
-        # smach.StateMachine.add('EXPLORE_FRONTIER', ExploreFrontier(),
-        #                        transitions={'succeeded':'DETECT_BOX_POSE', 
-        #                                    'failed':'mission_failed'})
+        smach.StateMachine.add('EXPLORE_FRONTIER', ExploreFrontier(),
+                               transitions={'succeeded':'DETECT_BOX_POSE', 
+                                           'failed':'mission_failed'})
         
         smach.StateMachine.add('DETECT_BOX_POSE', DetectBoxPose(), 
                                transitions={'succeeded':'NAVIGATE_TO_BOX_AND_OCR', 
