@@ -790,6 +790,11 @@ class NavigateToBoxAndOCR(smach.State):
             Config.TOPICS['MOVE_BASE'], 
             MoveBaseAction
         )
+        self.view_positions_publisher = rospy.Publisher(
+                '/box_view_positions', 
+                MarkerArray, 
+                queue_size=10
+            )
         self.client.wait_for_server()
         rospy.loginfo('导航客户端已连接')
         self.navigation_timeout = Config.TIMEOUTS['NAVIGATION']
@@ -1056,15 +1061,7 @@ class NavigateToBoxAndOCR(smach.State):
             
             marker_array.markers.append(text_marker)
         
-        # 发布标记数组
-        # 注意：需要在类中添加publisher
-        if not hasattr(self, 'view_positions_publisher'):
-            self.view_positions_publisher = rospy.Publisher(
-                '/box_view_positions', 
-                MarkerArray, 
-                queue_size=10
-            )
-        
+        # 发布标记数组    
         self.view_positions_publisher.publish(marker_array)
         rospy.loginfo("已发布盒子及其观察位置可视化")
 
