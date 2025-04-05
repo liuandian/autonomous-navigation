@@ -12,3 +12,10 @@
 roslaunch me5413_world world.launch
 roslaunch me5413_world navigation.launch
 rosrun detection yolov11.py 
+
+
+我们用经典的右手系判定法：
+
+    x × y = z ✅
+
+odom 的朝向是随车动的，map 的朝向是世界静态坐标，始终固定不动。
