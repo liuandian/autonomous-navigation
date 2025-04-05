@@ -11,6 +11,9 @@ import roslaunch
 from nav_msgs.msg import OccupancyGrid
 from map_msgs.msg import OccupancyGridUpdate
 from visualization_msgs.msg import MarkerArray, Marker
+from geometry_msgs.msg import Twist
+import math
+from std_msgs.msg import Int32
 
 # 可视化
 import matplotlib.pyplot as plt
@@ -38,11 +41,14 @@ class Config:
         
         # 导航相关话题
         'MOVE_BASE': 'move_base',
+
+        # OCR相关话题
+        'RECOGNIZED_DIGIT': '/recognized_digit',
     }
     
     # 超时设置(秒)
     TIMEOUTS = {
-        'INIT': 10.0,                # 初始化超时
+        'INIT': 60.0,                # 初始化超时
         'EXPLORE': 300.0,            # 探索任务超时
         'BOX_DETECTION': 3.0,       # 盒子检测超时
         'BRIDGE_DETECTION': 15.0,    # 桥梁检测超时
@@ -70,6 +76,15 @@ class Config:
         'Y_MAX': -2.0,   # 地图Y坐标最大值
     }
     
+    # 探索区域坐标表示
+    # x,y,w,z
+    EXPLORE_POINTS = [
+        (19.0, -22.0, 1.0, 0.0),
+        (9.0, -22.0, 0.7071, 0.7071),
+        (9.0, -2.0, 1.0, 0.0),
+        (19.0, -2.0, 0.7071, -0.7071)
+    ]
+
     # 掩码操作设置, 如果使用的是my_map_exploration.map，则需要设置USE_EXPLORE_MASK为False
     # 因为my_map_explore地图自带探索区域
     # 如果想直接使用原图，可以一键设置USE_MASKED为True
@@ -93,10 +108,10 @@ class Config:
     
     # 目标位置坐标列表 (x, y, orientation.w)
     GOALS = [
-        (6.0, 0.0, 3.0),
-        (10.0, 0.0, 3.0),
-        (14.0, 0.0, 3.0),
-        (18.0, 0.0, 3.0)
+        (6.0, 0.0, 1.0),
+        (10.0, 0.0, 1.0),
+        (14.0, 0.0, 1.0),
+        (18.0, 0.0, 1.0)
     ]
 
 # 定义状态：初始化
@@ -106,16 +121,54 @@ class Initialize(smach.State):
         self.timeout = Config.TIMEOUTS['INIT']
 
     def execute(self, userdata):
-        rospy.loginfo('初始化系统...')
-        
-        try:
-            # 在此添加初始化检查逻辑
-            # 例如检查各个必要服务是否可用
+        # try:
+        #     # 使用直接速度控制快速通过第一路段
+        #     if hasattr(Config, 'DIRECT_CONTROL') and Config.DIRECT_CONTROL.get('ENABLED', False):
+        #         if self.fast_navigate_first_segment():
+        #             rospy.loginfo('通过直接控制快速到达探索区域')
+        #             return 'initialized'
+        #         else:
+        #             rospy.logwarn('直接控制导航失败，使用move_base作为备选方案')
             
-            return 'initialized'
-        except Exception as e:
-            rospy.logerr('初始化过程出错: %s', str(e))
-            return 'failed'
+        #     # 如果直接控制被禁用或失败，使用move_base导航
+        #     # move_base依次前往探索区域的四个点
+        #     for i, point in enumerate(Config.EXPLORE_POINTS):
+        #         x, y, w, z = point
+        #         rospy.loginfo('[%d/%d] 初始化导航到探索区域点: x=%.2f, y=%.2f', 
+        #                     i+1, len(Config.EXPLORE_POINTS), x, y)
+                
+        #         # 创建目标位置
+        #         goal = MoveBaseGoal()
+        #         goal.target_pose.header.frame_id = "map"
+        #         goal.target_pose.header.stamp = rospy.Time.now()
+        #         goal.target_pose.pose.position.x = x
+        #         goal.target_pose.pose.position.y = y
+        #         goal.target_pose.pose.orientation.w = w
+        #         goal.target_pose.pose.orientation.z = z
+                
+        #         # 发送目标位置
+        #         self.move_base_client.send_goal(goal)
+                
+        #         # 检查导航超时
+        #         if not self.move_base_client.wait_for_result(rospy.Duration(self.timeout)):
+        #             rospy.logerr('导航到目标位置超时，取消目标')
+        #             self.move_base_client.cancel_goal()
+        #             return 'failed'
+                
+        #         # 检查导航结果
+        #         result_state = self.move_base_client.get_state()
+        #         if result_state != actionlib.GoalStatus.SUCCEEDED:
+        #             rospy.logerr('导航到目标位置失败，状态码: %d', result_state)
+        #             return 'failed'
+                    
+        #         rospy.loginfo('成功到达探索区域点 [%d/%d]', i+1, len(Config.EXPLORE_POINTS))
+                
+        #     rospy.loginfo('初始化完成：所有探索区域点导航成功')
+        #     return 'initialized'
+        # except Exception as e:
+        #     rospy.logerr('初始化过程出错: %s', str(e))
+        #     return 'failed'
+        return 'initialized'
 
 # 定义状态：前沿探索任务
 class ExploreFrontier(smach.State):
@@ -191,7 +244,7 @@ class ExploreFrontier(smach.State):
         # 主处理循环
         rospy.loginfo('地图数据就绪，开始探索...')
         
-        while not rospy.is_shutdown():
+        while (rospy.Time.now() - explore_start_time).to_sec() < self.max_explore_time:
             # 创建掩码地图，并立即释放锁
             masked_costmap = None
             masked_costmap_updates = None
@@ -235,18 +288,21 @@ class ExploreFrontier(smach.State):
             
             # 如果前沿点数量小于阈值，认为探索完成
             if frontier_count <= self.frontier_threshold:
+                # 取消订阅器
+                self.costmap_subscriber.unregister()
+                self.costmap_updates_subscriber.unregister()
+                self.frontier_subscriber.unregister()
+                # 取消发布器
+                self.explore_costmap_publisher.unregister()
+                self.explore_costmap_updates_publisher.unregister()
+                # 关闭explore_lite节点
                 rospy.loginfo('前沿点数量已低于阈值，探索任务完成')
                 return 'succeeded'
-            
-            # 检查是否超时
-            if (rospy.Time.now() - explore_start_time).to_sec() > self.max_explore_time:
-                rospy.loginfo('探索任务超时，强制完成')
-                return 'succeeded'
-            
-            rate.sleep()
+            else:
+                continue  # 继续循环，检查下一次
 
         # 停止探索
-        rospy.loginfo('停止前沿探索')
+        rospy.loginfo('前沿探索超时, 停止任务')
         # 取消订阅器
         self.costmap_subscriber.unregister()
         self.costmap_updates_subscriber.unregister()
@@ -255,7 +311,7 @@ class ExploreFrontier(smach.State):
         self.explore_costmap_publisher.unregister()
         self.explore_costmap_updates_publisher.unregister()
         
-        return 'succeeded'
+        return 'succeeded'  # 返回成功状态
 
     def costmap_callback(self, msg):
         with self.map_lock:
@@ -537,14 +593,6 @@ class DetectBoxPose(smach.State):
     def costmap_callback(self, msg):
         """处理接收到的代价地图"""
         self.costmap = msg
-        rospy.loginfo('接收到代价地图，大小: %d x %d',
-                      msg.info.width, msg.info.height)
-        rospy.loginfo('地图分辨率: %.2f m/pixel', msg.info.resolution)
-        rospy.loginfo('地图原点: (%.2f, %.2f)',
-                      msg.info.origin.position.x, msg.info.origin.position.y)
-        rospy.loginfo('地图坐标系: %s', msg.header.frame_id)
-        rospy.loginfo('地图时间戳: %s', msg.header.stamp)
-        rospy.loginfo('地图内容: %s', msg.data)
 
     def detect_boxes_from_costmap(self):
         """从代价地图中提取盒子位置"""
@@ -736,34 +784,25 @@ class NavigateToBoxAndOCR(smach.State):
             Bool, 
             queue_size=10
         )
+        self.ocr_result_subscriber = rospy.Subscriber(
+            Config.TOPICS['RECOGNIZED_DIGIT'], 
+            Int32, 
+            self.ocr_result_callback
+        )
         self.client = actionlib.SimpleActionClient(
             Config.TOPICS['MOVE_BASE'], 
             MoveBaseAction
         )
         self.client.wait_for_server()
+        rospy.loginfo('导航客户端已连接')
         self.navigation_timeout = Config.TIMEOUTS['NAVIGATION']
         self.ocr_timeout = Config.TIMEOUTS['OCR_PROCESSING']
-
-        # 测试：添加盒子位置订阅器
-        # 直接订阅/gazebo/ground_truth/box_markers
-        self.box_positions_subscriber = rospy.Subscriber(
-            '/gazebo/ground_truth/box_markers', 
-            MarkerArray,
-            self.box_positions_callback
-        )
-        self.box_positions = None  # 用于存储盒子位置
-        self.pose_array_publisher = rospy.Publisher(
-            Config.TOPICS['DETECTED_BOXES'], 
-            PoseArray, 
-            queue_size=10
-        )
-        
+        self.ocr_result = None  # 用于存储OCR结果
+  
     def execute(self, userdata):
-        # # 从userdata中获取盒子位置
-        # box_positions = userdata.box_positions_in
-        
-        # 测试：无userdata,改为监听盒子位置的真值
-        # 等待盒子位置数据
+        # 从userdata中获取盒子位置
+        self.box_positions = userdata.box_positions_in
+
         wait_timeout = rospy.Duration(10.0)  # 设置合理的超时时间
         start_time = rospy.Time.now()
         
@@ -774,8 +813,8 @@ class NavigateToBoxAndOCR(smach.State):
         if not self.box_positions:
             rospy.logwarn('没有盒子位置可供导航')
             return 'failed'
-            
-        rospy.loginfo('导航到%d个盒子并启动OCR...', len(self.box_positions.markers))
+
+        rospy.loginfo('导航到%d个盒子并启动OCR...', len(self.box_positions.poses))
         
         # 创建PoseArray存储提取的姿态
         pose_array = PoseArray()
@@ -783,44 +822,9 @@ class NavigateToBoxAndOCR(smach.State):
         pose_array.header.stamp = rospy.Time.now()
 
         # 对每个盒子进行导航和OCR
-        for i, marker in enumerate(self.box_positions.markers):
-            # 测试阶段需要反转y坐标
-            marker.pose.position.y = -marker.pose.position.y  # 反转y坐标
+        for i, pose in enumerate(self.box_positions.poses):
             try:
-                goal = MoveBaseGoal()
-                goal.target_pose.header.frame_id = "map"
-                goal.target_pose.header.stamp = rospy.Time.now()
-                goal.target_pose.pose = marker.pose
-
-                # 把pose添加到pose_array
-                pose_array.poses.append(marker.pose)
-                # 发布盒子位置
-                if pose_array.poses:
-                    self.pose_array_publisher.publish(pose_array)
-                else:
-                    rospy.logwarn('没有盒子位置可供发布')
-                
-                rospy.loginfo('[%d/%d] 导航到盒子位置: x=%.2f, y=%.2f', 
-                              i+1, len(self.box_positions.markers),
-                              marker.pose.position.x, marker.pose.position.y)
-                              
-                self.client.send_goal(goal)
-                
-                # 等待导航结果，添加超时
-                if not self.client.wait_for_result(rospy.Duration(self.navigation_timeout)):
-                    rospy.logwarn('导航到盒子超时')
-                    continue
-                
-                if self.client.get_state() != actionlib.GoalStatus.SUCCEEDED:
-                    rospy.logwarn('导航到盒子失败，尝试下一个')
-                    continue
-                
-                # 启动OCR处理
-                ocr_trigger_msg = Bool()
-                ocr_trigger_msg.data = True
-                self.ocr_trigger_publisher.publish(ocr_trigger_msg)
-                rospy.loginfo('OCR触发消息已发布，等待处理...')
-                rospy.sleep(self.ocr_timeout)  # 给OCR处理一些时间
+                self.navigate_to_best_viewing_positions(pose)
                 
             except Exception as e:
                 rospy.logerr('处理盒子时发生错误: %s', str(e))
@@ -832,6 +836,70 @@ class NavigateToBoxAndOCR(smach.State):
         # rospy.loginfo('接收到盒子位置消息，数量: %d', len(msg.markers))
         # 保存位置
         self.box_positions = msg
+
+    def navigate_to_best_viewing_positions(self, box_pose):
+        """计算并导航到盒子周围的最佳观察位置"""
+        # 定义4个最佳观察位置（盒子的四周）
+        viewing_angles = [0, math.pi/2, math.pi, 3*math.pi/2]  # 0°, 90°, 180°, 270°
+        viewing_distance = 0.7  # 最佳观察距离
+        
+        for i, angle in enumerate(viewing_angles):
+            # 计算观察位置
+            view_x = box_pose.position.x + viewing_distance * math.cos(angle)
+            view_y = box_pose.position.y + viewing_distance * math.sin(angle)
+            
+            # 修正计算朝向盒子的方向
+            # 正确计算从观察位置朝向盒子的角度
+            dx = box_pose.position.x - view_x
+            dy = box_pose.position.y - view_y
+            facing_angle = math.atan2(dy, dx)  # atan2正确的参数顺序是(y, x)
+            
+            # 创建朝向盒子的姿态
+            goal = MoveBaseGoal()
+            goal.target_pose.header.frame_id = "map"
+            goal.target_pose.header.stamp = rospy.Time.now()
+            goal.target_pose.pose.position.x = view_x
+            goal.target_pose.pose.position.y = view_y
+            goal.target_pose.pose.position.z = 0.0
+            
+            # 将角度转换为四元数
+            goal.target_pose.pose.orientation.z = math.sin(facing_angle / 2.0)
+            goal.target_pose.pose.orientation.w = math.cos(facing_angle / 2.0)
+            
+            rospy.loginfo('导航到盒子观察位置 [%d/4]: x=%.2f, y=%.2f, 角度=%.2f°', 
+                        i+1, view_x, view_y, math.degrees(facing_angle))
+                        
+            self.client.send_goal(goal)
+            
+            # 等待导航结果，添加超时
+            if not self.client.wait_for_result(rospy.Duration(self.navigation_timeout)):
+                rospy.logwarn('导航到观察位置超时，尝试下一个位置')
+                continue
+            
+            if self.client.get_state() != actionlib.GoalStatus.SUCCEEDED:
+                rospy.logwarn('导航到观察位置失败，尝试下一个位置')
+                continue
+            
+            # 到达观察位置后，触发OCR
+            ocr_trigger_msg = Bool()
+            ocr_trigger_msg.data = True
+            self.ocr_trigger_publisher.publish(ocr_trigger_msg)
+            rospy.loginfo('在观察位置触发OCR...')
+            rospy.sleep(1.0)  # 给OCR处理时间
+
+            # 如果OCR处理完成，话题/recognized_digit(Int32)会发布结果
+            # 识别成功，跳出循环
+            if self.ocr_result is not None:  # 修改判断条件，检查是否有任何结果
+                rospy.loginfo('OCR处理成功，识别到数字: %d', self.ocr_result)
+                self.ocr_result = None  # 重置结果以便下一次识别
+                break
+            else:
+                rospy.logwarn('OCR处理失败，尝试下一个观察位置')
+                continue
+        
+    def ocr_result_callback(self, msg):
+        self.ocr_result = msg.data
+
 # 定义状态：桥检测任务  
 class DetectBridge(smach.State):
     def __init__(self):
@@ -1135,17 +1203,17 @@ def main():
     # 添加状态到状态机
     with sm:
         smach.StateMachine.add('INITIALIZE', Initialize(), 
-                               transitions={'initialized':'NAVIGATE_TO_BOX_AND_OCR', # 暂时跳过探索
+                               transitions={'initialized':'DETECT_BOX_POSE', # 暂时跳过探索
                                            'failed':'mission_failed'})
                 
         # smach.StateMachine.add('EXPLORE_FRONTIER', ExploreFrontier(),
         #                        transitions={'succeeded':'DETECT_BOX_POSE', 
         #                                    'failed':'mission_failed'})
         
-        # smach.StateMachine.add('DETECT_BOX_POSE', DetectBoxPose(), 
-        #                        transitions={'succeeded':'NAVIGATE_TO_BOX_AND_OCR', 
-        #                                    'failed':'mission_failed'},
-        #                        remapping={'box_positions_out':'box_positions'})
+        smach.StateMachine.add('DETECT_BOX_POSE', DetectBoxPose(), 
+                               transitions={'succeeded':'NAVIGATE_TO_BOX_AND_OCR', 
+                                           'failed':'mission_failed'},
+                               remapping={'box_positions_out':'box_positions'})
         
         smach.StateMachine.add('NAVIGATE_TO_BOX_AND_OCR', NavigateToBoxAndOCR(),
                                transitions={'succeeded':'DETECT_BRIDGE', 
