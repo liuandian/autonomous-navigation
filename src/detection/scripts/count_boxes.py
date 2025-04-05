@@ -6,10 +6,10 @@ import cv2
 import easyocr
 import tf2_ros
 import tf2_geometry_msgs
-from sensor_msgs.msg import Image, PointCloud2, CameraInfo
+from sensor_msgs.msg import Image, PointCloud2, CameraInfo,CompressedImage
 from geometry_msgs.msg import PointStamped
 from sklearn.decomposition import PCA
-
+import time
 rospy.init_node("ocr_lidar_box_center_node")
 
 ocr_reader = easyocr.Reader(['en'], gpu=False)
@@ -21,7 +21,7 @@ lidar_points = None
 camera_intrinsics = None
 
 image_pub = rospy.Publisher("/detection/image_annotated", Image, queue_size=1)
-
+compressed_image_pub = rospy.Publisher("/detection/image_annotated/compressed", CompressedImage, queue_size=1)
 def camera_info_callback(info):
     global camera_intrinsics
     camera_intrinsics = np.array(info.K).reshape(3, 3)
@@ -45,6 +45,7 @@ def adjust_normal_direction(normal_vector, box_center_point):
     return normal_vector
 
 def image_callback(img_msg):
+    start_time = time.time()
     global lidar_points, camera_intrinsics
 
     if lidar_points is None or camera_intrinsics is None:
@@ -145,6 +146,16 @@ def image_callback(img_msg):
     annotated_msg = ros_numpy.msgify(Image, annotated_bgr, encoding="bgr8")
     annotated_msg.header = img_msg.header
     image_pub.publish(annotated_msg)
+    
+    # Compress the image and publish as CompressedImage
+    compressed_msg = CompressedImage()
+    compressed_msg.header = img_msg.header
+    compressed_msg.format = "jpeg"
+    compressed_msg.data = np.array(cv2.imencode('.jpg', annotated_bgr)[1]).tobytes()
+    compressed_image_pub.publish(compressed_msg)
+    
+    end_time = time.time()
+    rospy.loginfo(f"Processing time: {end_time - start_time:.2f} seconds")
 
 rospy.Subscriber("/front/image_raw", Image, image_callback)
 rospy.spin()
