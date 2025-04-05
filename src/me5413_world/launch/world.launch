@@ -17,8 +17,8 @@
 
   <!-- 加载机器人（手动传入起始位姿）20,16,3.14 -->
   <include file="$(find me5413_world)/launch/include/spawn_jackal.launch">
-    <arg name="x" value="20.0" />
-    <arg name="y" value="16.0" />
-    <arg name="yaw" value="3.14" />
+    <arg name="x" value="0.0" />
+    <arg name="y" value="0.0" />
+    <arg name="yaw" value="1.57" />
   </include>
 </launch>
