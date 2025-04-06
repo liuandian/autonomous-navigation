@@ -3,35 +3,45 @@ import rospy
 import tf
 from geometry_msgs.msg import PoseStamped
 from move_base_msgs.msg import MoveBaseActionResult
+from std_msgs.msg import Bool  # 加入 Bool 类型
 
 class FixedPathNavigator:
     def __init__(self):
         rospy.init_node('fixed_path_navigator', anonymous=True)
 
         self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=10)
+        self.trigger_pub = rospy.Publisher('/bridge_detection_trigger', Bool, queue_size=1)
+
         rospy.Subscriber('/move_base/result', MoveBaseActionResult, self.result_callback)
 
         self.path = [
-            (20.0, 0.0, 0.0),
-            (21.0, -21.6, -1.57),
-            (18.9, -21.6, -3.14),
-            (18.9, -12.3, 1.57),
-            (18.9, -3.0, 1.57),
-            (14.5, -3.0, 3.14),
-            (14.5, -12.3, -1.57),
-            (14.5, -21.6, -1.57),
+            # (20.0, 0.0, 0.0),
+            # (21.0, -21.6, -1.57),
+            # (18.9, -21.6, -3.14),
+            # (18.9, -12.3, 1.57),
+            # (18.9, -3.0, 1.57),
+            # (14.5, -3.0, 3.14),
+            # (14.5, -12.3, -1.57),
+            # (14.5, -21.6, -1.57),
             (10.0, -21.6, -3.14),
-            (10.0, -12.3, 1.57),
+            # (10.0, -12.3, 1.57),
             (10.0, -3.0, -1.57)
         ]
 
         self.current_index = 0
         rospy.sleep(2.0)  # 等待时钟、发布器初始化
         self.send_next_goal()
+        
 
     def send_next_goal(self):
         if self.current_index >= len(self.path):
             rospy.loginfo("✅ 所有目标点均已完成导航。")
+            rospy.sleep(1.0)
+
+            # ✅ 发布桥梁检测触发信号
+            trigger_msg = Bool(data=True)
+            self.trigger_pub.publish(trigger_msg)
+            rospy.loginfo("📤 已发布桥梁检测触发信号 /bridge_detection_trigger")
             return
 
         x, y, theta = self.path[self.current_index]

@@ -1,0 +1,31 @@
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Name: Grid
+      Enabled: true
+    - Class: rviz/Map
+      Name: GlobalCostmap
+      Enabled: true
+      Topic: /move_base/global_costmap/costmap
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: false
+      Autocompute Intensity Bounds: true
+    - Class: rviz/Image
+      Name: CameraImage
+      Enabled: true
+      Image Topic: /camera/image_raw
+      Normalize Range: true
+      Min Value: 0.0
+      Max Value: 255.0
+      Transport Hint: raw
+    - Class: rviz/Pose
+      Name: Bridge Pose
+      Enabled: true
+      Topic: /detected_bridges
+      Arrow Color: 255; 0; 0
+  Enabled: true
+  Fixed Frame: map
+  Name: root
+
