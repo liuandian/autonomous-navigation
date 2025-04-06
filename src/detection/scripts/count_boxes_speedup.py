@@ -13,6 +13,11 @@ from sklearn.decomposition import PCA
 import time
 import math
 from collections import defaultdict
+from std_msgs.msg import Int8
+
+# 在初始化节点后添加发布器
+min_box_pub = rospy.Publisher("/detection/min_box_count", Int8, queue_size=1)
+
 
 rospy.init_node("ocr_lidar_box_center_node")
 
@@ -219,6 +224,12 @@ def image_callback(img_msg):
     compressed_msg.format = "jpeg"
     compressed_msg.data = np.array(cv2.imencode('.jpg', annotated_bgr, [int(cv2.IMWRITE_JPEG_QUALITY), 50])[1]).tobytes()
     compressed_image_pub.publish(compressed_msg)
+    
+        # 找到拥有最小计数的 digit 并发布其值
+    if box_counts:
+        min_digit = min(box_counts, key=box_counts.get)  # 找到计数最小的 digit
+        min_box_pub.publish(int(min_digit))    
+        rospy.loginfo(f"min_digit {min_digit}") 
 
     end_time = time.time()
     rospy.loginfo(f"Processing time: {end_time - start_time:.2f} seconds")
