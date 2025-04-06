@@ -1,7 +1,0 @@
-<launch>
-
-  <!-- 启动waypoint_publisher节点 -->
-  <node name="waypoint_publisher" pkg="waypoint_navigation" type="waypoint_publisher" output="screen" />
-  <!-- <node name="waypoint_publisher2" pkg="waypoint_navigation" type="showpath" output="screen" /> -->
-
-</launch>

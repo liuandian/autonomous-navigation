@@ -1,5 +1,0 @@
-<launch>
-    <arg name="filename" value="$(find kk)/map/race" />
-
-    <node name="map_save" pkg="map_server" type="map_saver" args="-f $(arg filename)" />
-</launch>
