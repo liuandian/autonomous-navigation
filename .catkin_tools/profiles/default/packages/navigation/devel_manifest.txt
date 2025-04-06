@@ -1,5 +1,0 @@
-navigation
-/home/wjx/new/ME5413_Final_Project/devel/.private/navigation/cmake.lock /home/wjx/new/ME5413_Final_Project/devel/./cmake.lock
-/home/wjx/new/ME5413_Final_Project/devel/.private/navigation/share/navigation/cmake/navigationConfig.cmake /home/wjx/new/ME5413_Final_Project/devel/share/navigation/cmake/navigationConfig.cmake
-/home/wjx/new/ME5413_Final_Project/devel/.private/navigation/share/navigation/cmake/navigationConfig-version.cmake /home/wjx/new/ME5413_Final_Project/devel/share/navigation/cmake/navigationConfig-version.cmake
-/home/wjx/new/ME5413_Final_Project/devel/.private/navigation/lib/pkgconfig/navigation.pc /home/wjx/new/ME5413_Final_Project/devel/lib/pkgconfig/navigation.pc

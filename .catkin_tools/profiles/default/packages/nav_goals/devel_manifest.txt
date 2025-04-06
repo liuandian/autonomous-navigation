@@ -1,5 +1,0 @@
-nav_goals
-/home/wjx/new/ME5413_Final_Project/devel/.private/nav_goals/cmake.lock /home/wjx/new/ME5413_Final_Project/devel/./cmake.lock
-/home/wjx/new/ME5413_Final_Project/devel/.private/nav_goals/share/nav_goals/cmake/nav_goalsConfig-version.cmake /home/wjx/new/ME5413_Final_Project/devel/share/nav_goals/cmake/nav_goalsConfig-version.cmake
-/home/wjx/new/ME5413_Final_Project/devel/.private/nav_goals/share/nav_goals/cmake/nav_goalsConfig.cmake /home/wjx/new/ME5413_Final_Project/devel/share/nav_goals/cmake/nav_goalsConfig.cmake
-/home/wjx/new/ME5413_Final_Project/devel/.private/nav_goals/lib/pkgconfig/nav_goals.pc /home/wjx/new/ME5413_Final_Project/devel/lib/pkgconfig/nav_goals.pc

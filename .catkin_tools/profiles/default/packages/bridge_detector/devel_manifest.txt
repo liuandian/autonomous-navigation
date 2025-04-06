@@ -1,5 +1,0 @@
-bridge_detector
-/home/wjx/new/ME5413_Final_Project/devel/.private/bridge_detector/cmake.lock /home/wjx/new/ME5413_Final_Project/devel/./cmake.lock
-/home/wjx/new/ME5413_Final_Project/devel/.private/bridge_detector/share/bridge_detector/cmake/bridge_detectorConfig-version.cmake /home/wjx/new/ME5413_Final_Project/devel/share/bridge_detector/cmake/bridge_detectorConfig-version.cmake
-/home/wjx/new/ME5413_Final_Project/devel/.private/bridge_detector/share/bridge_detector/cmake/bridge_detectorConfig.cmake /home/wjx/new/ME5413_Final_Project/devel/share/bridge_detector/cmake/bridge_detectorConfig.cmake
-/home/wjx/new/ME5413_Final_Project/devel/.private/bridge_detector/lib/pkgconfig/bridge_detector.pc /home/wjx/new/ME5413_Final_Project/devel/lib/pkgconfig/bridge_detector.pc
