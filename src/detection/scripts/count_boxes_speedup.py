@@ -87,7 +87,12 @@ class BoxCountNode:
             [rotation.x, rotation.y, rotation.z, rotation.w]
         )[:3, :3]
         trans_vec = np.array([translation.x, translation.y, translation.z])
-        return points @ rot_mat.T + trans_vec
+
+        transformed = points @ rot_mat.T + trans_vec
+        # 保证没有 NaN
+        transformed = transformed[~np.isnan(transformed).any(axis=1)]
+        return transformed
+
 
     def distance_3d(self, c1, c2):
         return math.sqrt((c1[0] - c2[0])**2 + (c1[1] - c2[1])**2 + (c1[2] - c2[2])**2)
@@ -136,12 +141,17 @@ class BoxCountNode:
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         # 转换点云坐标
-        lidar_cam = self.transform_points(self.lidar_points, self.transform)
+        points = self.lidar_points.copy()  # 避免 callback 更新干扰
+        lidar_cam_all = self.transform_points(points, self.transform)
 
-        # 只保留在相机前方的点
+        min_len = min(len(lidar_cam_all), len(points))
+        lidar_cam = lidar_cam_all[:min_len]
+        lidar_points = points[:min_len]
+
         valid_indices = lidar_cam[:, 2] > 0
         lidar_cam = lidar_cam[valid_indices]
-        lidar_filtered = self.lidar_points[valid_indices]
+        lidar_filtered = lidar_points[valid_indices]
+
 
         # 投影到图像坐标
         uv = (self.camera_intrinsics @ lidar_cam.T).T
