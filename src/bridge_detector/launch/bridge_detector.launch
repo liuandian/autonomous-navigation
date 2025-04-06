@@ -1,0 +1,14 @@
+<launch>
+  <!-- 参数配置 -->
+  <param name="map_topic" value="/move_base/global_costmap/costmap" />
+  <param name="bridge_y_min" value="-5.5" />
+  <param name="bridge_y_max" value="-2.0" />
+  <param name="occ_thresh" value="50" />
+
+  <!-- 桥检测节点 -->
+  <node pkg="bridge_detector" type="bridge_detector_node.py" name="bridge_detector" output="screen" />
+
+  <!-- RViz 可视化 -->
+  <node name="rviz_bridge" pkg="rviz" type="rviz" args="-d $(find bridge_detector)/config/bridge_viz.rviz" output="screen" />
+</launch>
+

@@ -3,7 +3,6 @@
 devel/
 logs/
 build/
-.catkin_tools/
 bin/
 lib/
 msg_gen/
@@ -23,11 +22,11 @@ devel_isolated/
 *.cfgc
 /cfg/cpp/
 /cfg/*.py
-
+.catkin_tools/
 # Ignore generated docs
 *.dox
 *.wikidoc
-*.pt
+
 # eclipse stuff
 .project
 .cproject
