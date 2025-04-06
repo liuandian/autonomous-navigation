@@ -54,13 +54,11 @@ class StateMachine:
             for state in self.state_list:
                 self.publishers[state].publish(Bool(data=(state == self.current_state)))
 
-            # 调用当前状态对应的处理函数
             if self.current_state and self.current_state in self.state_handlers:
                 self.state_handlers[self.current_state]()
 
             rate.sleep()
 
-    # === 以下是各状态的操作函数 ===
     def handle_init(self):
         rospy.loginfo_throttle(5, "[init]")
 

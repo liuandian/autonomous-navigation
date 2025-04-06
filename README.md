@@ -55,10 +55,6 @@ There are two sources of models needed:
 
 ## Usage
 ```bash
-# install the tools we need to use 
-sudo apt install python3-catkin-tools
-sudo apt install ros-noetic-global-planner
-sudo apt install ros-noetic-dwa-local-planner
 
 #Build the workspace
 cd ME5413_Final_Project
@@ -67,12 +63,17 @@ catkin build
 #source 
 source devel/setup.bash
 
-#creat the world  
-roslaunch me5413_world world.launch
+#State machine
+rosrun StateMachine state_machine.py
+#Nav
+roslaunch StateMachine final.launch
 
-# load nav topic 
-roslaunch kk navi.launch
-roslaunch waypoint_navigation way.launch
+
+#Box detection
+rosrun detection boxes_detection.py
+#Bridge detection
+rosrun bridge_detector bridge_detector
+
 
 
 ```
