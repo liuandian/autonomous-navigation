@@ -52,7 +52,7 @@ void ObjectSpawner::spawnRandomBridge()
   bridge_msg.set_sdf_filename("model://bridge");
 
   std::srand(std::time(0));
-  bridge_position_ = (static_cast<double>(std::rand()) / RAND_MAX * 0.5 + 0.25) * (MAX_X_COORD - MIN_X_COORD) + MIN_X_COORD;
+  bridge_position_ = (static_cast<double>(std::rand()) / RAND_MAX * 0.5 + 0.05) * (MAX_X_COORD - MIN_X_COORD) + MIN_X_COORD;
   msgs::Set(bridge_msg.mutable_pose(), ignition::math::Pose3d(
     ignition::math::Vector3d(bridge_position_, 9.0, 2.6), 
     ignition::math::Quaterniond(1.57079632679, 0, 0)));

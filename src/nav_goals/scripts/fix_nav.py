@@ -11,11 +11,12 @@ class FixedPathNavigator:
 
         self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=10)
         self.trigger_pub = rospy.Publisher('/bridge_detection_trigger', Bool, queue_size=1)
+        self.boxes_count_pub = rospy.Publisher('/do_boxes_count', Bool, queue_size=1)
+        self.cross_bridge_pub = rospy.Publisher('/do_cross_bridge', Bool, queue_size=1)
 
         rospy.Subscriber('/move_base/result', MoveBaseActionResult, self.result_callback)
 
         self.path = [
-            # (20.0, 0.0, 0.0),
             # (21.0, -21.6, -1.57),
             # (18.9, -21.6, -3.14),
             # (18.9, -12.3, 1.57),
@@ -23,9 +24,9 @@ class FixedPathNavigator:
             # (14.5, -3.0, 3.14),
             # (14.5, -12.3, -1.57),
             # (14.5, -21.6, -1.57),
-            (10.0, -21.6, -3.14),
+            (10.5, -21.6, 1.57),
             # (10.0, -12.3, 1.57),
-            (10.0, -3.0, -1.57)
+            (10.5, -3.0, -1.57)
         ]
 
         self.current_index = 0
@@ -41,8 +42,11 @@ class FixedPathNavigator:
             # ✅ 发布桥梁检测触发信号
             trigger_msg = Bool(data=True)
             self.trigger_pub.publish(trigger_msg)
+            self.cross_bridge_pub.publish(Bool(data=True))
             rospy.loginfo("📤 已发布桥梁检测触发信号 /bridge_detection_trigger")
+            rospy.signal_shutdown("导航完成，自动退出。")
             return
+
 
         x, y, theta = self.path[self.current_index]
         rospy.loginfo(f"➡️ 发布目标 {self.current_index + 1}/{len(self.path)}: ({x}, {y}, {theta})")
@@ -61,6 +65,10 @@ class FixedPathNavigator:
         goal.pose.orientation.w = quat[3]
 
         self.goal_pub.publish(goal)
+
+        if self.current_index == 1:
+            rospy.loginfo("🚀 开始do_boxes_count...")
+            self.boxes_count_pub.publish(Bool(data=True))
 
     def result_callback(self, msg):
         status = msg.status.status

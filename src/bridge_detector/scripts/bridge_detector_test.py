@@ -108,7 +108,7 @@ class BridgeDetector:
             rospy.loginfo("➡️ 发布路径点 x=%.2f, y=%.2f", x, mean_y)
 
             # 等待导航完成或超时
-            timeout = rospy.Time.now() + rospy.Duration(30)
+            timeout = rospy.Time.now() + rospy.Duration(40)
             rate = rospy.Rate(5)
             while not self.reached_goal and rospy.Time.now() < timeout:
                 rate.sleep()
@@ -116,7 +116,8 @@ class BridgeDetector:
             if not self.reached_goal:
                 rospy.logwarn("⏰ 等待导航超时，停止后续路径点发送")
                 break
-
+        
+        
         # 可视化 marker
         marker = Marker()
         marker.header.frame_id = self.map_msg.header.frame_id

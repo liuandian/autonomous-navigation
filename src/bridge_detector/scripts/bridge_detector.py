@@ -8,6 +8,7 @@ from nav_msgs.msg import OccupancyGrid
 from visualization_msgs.msg import Marker
 from move_base_msgs.msg import MoveBaseActionResult
 import numpy as np
+from geometry_msgs.msg import Twist
 
 class BridgeDetector:
     def __init__(self):
@@ -45,6 +46,26 @@ class BridgeDetector:
             self.reached_goal = True
         else:
             rospy.logwarn("⚠️ 导航失败，状态码: %d", msg.status.status)
+    def move(self):
+        pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+
+        rate = rospy.Rate(10)  # 10Hz
+
+        twist = Twist()
+        twist.linear.x = 3  # 向前 0.3 m/s
+        twist.angular.z = 0  # 向左转 0.5 rad/s
+
+        rospy.loginfo("Start moving...")
+
+        for _ in range(30):  # 持续 5 秒
+            pub.publish(twist)
+            rate.sleep()
+
+        # 停止
+        twist.linear.x = 0
+        twist.angular.z = 0
+        pub.publish(twist)
+        rospy.loginfo("Stopped.")
 
     def detect_bridge(self):
         if self.map_msg is None:
@@ -95,13 +116,14 @@ class BridgeDetector:
         mean_y = np.mean(bridge_array[:, 1])
         rospy.loginfo("✅ 桥中心: x = %.2f, y = %.2f", mean_x, mean_y)
 
-        for idx, x in enumerate([10.0, 4.0]):
+        for idx, x in enumerate([9.5, 4.0]):
             self.reached_goal = False
             pose2d = Pose2D()
             pose2d.x = x
             pose2d.y = mean_y
-            pose2d.theta = 0.0
+            pose2d.theta = -3.14
             self.pose2d_pub.publish(pose2d)
+            self.reached_goal = False
             rospy.loginfo("➡️ 发布目标点 x=%.2f, y=%.2f", x, mean_y)
 
             timeout = rospy.Time.now() + rospy.Duration(30)
@@ -116,6 +138,7 @@ class BridgeDetector:
             if idx == 0:
                 rospy.loginfo("🔓 解锁桥梁")
                 self.unlock_pub.publish(Bool(data=True))
+                self.move()
 
         marker = Marker()
         marker.header.frame_id = self.map_msg.header.frame_id
@@ -148,6 +171,7 @@ class BridgeTriggerListener:
         if msg.data:
             rospy.loginfo("📩 收到触发信号，实例化桥梁检测器")
             detector = BridgeDetector()
+            rospy.sleep(1.0)
             detector.detect_bridge()
 
 if __name__ == '__main__':
