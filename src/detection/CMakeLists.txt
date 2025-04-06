@@ -131,6 +131,8 @@ catkin_install_python(PROGRAMS
   scripts/ocr_only_node.py
   scripts/count_boxes_speedup.py
   scripts/boxes_detection.py
+  scripts/fliter.py
+  scripts/test.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
@@ -225,3 +227,12 @@ install(DIRECTORY launch
 
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
+
+# 添加可执行文件
+add_executable(test_node src/test.cpp)
+
+# 链接依赖库
+target_link_libraries(test_node ${catkin_LIBRARIES})
+
+# 添加依赖
+add_dependencies(test_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
