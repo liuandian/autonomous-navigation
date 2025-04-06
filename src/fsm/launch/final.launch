@@ -6,14 +6,16 @@
     <!-- Include navigation launch file -->
     <include file="$(find navigation)/launch/navigation.launch" />
     
-    <!-- Include ocr launch file -->
-    <include file="$(find ocr)/launch/ocr.launch" />
+    <!-- Include nav_goal launch file -->
+    <include file="$(find nav_goals)/launch/nav_goals.launch" />
 
-    <!-- Include box_detection launch file -->
-    <include file="$(find box_detection)/launch/box_detection.launch" />
+    <!-- Include ocr launch file -->
+    <!-- <include file="$(find ocr)/launch/ocr.launch" /> -->
+
+
 
     <!-- Include frontier_explore launch file -->
-    <include file="$(find frontier_explore)/launch/frontier_explore.launch" />
+    <!-- <include file="$(find frontier_explore)/launch/frontier_explore.launch" /> -->
 
     <!-- Include SLAM launch file -->
     <!-- <include file="$(find slam)/launch/fast_lio.launch" /> -->

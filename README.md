@@ -44,7 +44,9 @@ git clone https://github.com/CANLAN-SC/ME5413_Final_Project_Group12.git
 sudo apt-get update
 sudo apt-get install python-opencv python-numpy ros-$ROS_DISTRO-teleop-twist-keyboard ros-$ROS_DISTRO-gmapping ros-$ROS_DISTRO-move-base
 sudo apt-get install tesseract-ocr libtesseract-dev
+sudo apt install ros-noetic-explore-lite
 pip install pytesseract scikit-learn
+
 ```
 
 4. 编译工作空间:
@@ -55,6 +57,7 @@ source devel/setup.bash
 ```
 
 ## 运行方法
+chmod +x src/ocr/scripts/before_bridge_ocr.py
 
 ### 1. 启动所有节点
 

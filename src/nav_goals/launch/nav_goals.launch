@@ -1,0 +1,4 @@
+<launch>
+    <node name= "nav_goals" pkg="nav_goals" type="nav_goals.py" output="screen" />
+    <node name="fix_nav" pkg="nav_goals" type="fix_nav.py" output="screen" />
+</launch>
