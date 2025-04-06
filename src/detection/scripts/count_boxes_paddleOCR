@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+import rospy
+import ros_numpy
+import numpy as np
+import cv2
+from paddleocr import PaddleOCR
+import tf2_ros
+import tf2_geometry_msgs
+import tf.transformations
+from sensor_msgs.msg import Image, PointCloud2, CameraInfo, CompressedImage
+from geometry_msgs.msg import PointStamped
+from sklearn.decomposition import PCA
+import time
+import math
+from collections import defaultdict
+from std_msgs.msg import Int8
+
+class BoxCountNode:
+    def __init__(self):
+        rospy.init_node("ocr_lidar_box_center_node")
+
+        # Initialize PaddleOCR (Lite version)
+        self.ocr_reader = PaddleOCR(use_angle_cls=False, lang='en')
+        rospy.loginfo("PaddleOCR (Lite) initialized.")
+
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+
+        self.lidar_points = None
+        self.camera_intrinsics = None
+        self.transform = None
+        self.last_tf_update = rospy.Time(0)
+
+        self.image_pub = rospy.Publisher("/detection/image_annotated", Image, queue_size=1)
+        self.compressed_image_pub = rospy.Publisher("/detection/image_annotated/compressed", CompressedImage, queue_size=1)
+        self.min_box_pub = rospy.Publisher("/detection/min_box_count", Int8, queue_size=1)
+
+        self.finalized_boxes = defaultdict(list)
+        self.pending_boxes = defaultdict(list)
+        self.box_counts = defaultdict(int)
+        self.match_points_num = 20
+        self.dist_existing = 1.2
+        self.dist_pending = 0.3
+        self.required_frames = 20
+
+        rospy.Subscriber("/front/camera_info", CameraInfo, self.camera_info_callback)
+        rospy.Subscriber("/mid/points", PointCloud2, self.lidar_callback)
+        rospy.Subscriber("/front/image_raw", Image, self.image_callback)
+
+    def camera_info_callback(self, info):
+        self.camera_intrinsics = np.array(info.K).reshape(3, 3)
+
+    def lidar_callback(self, pc2_msg):
+        self.lidar_points = ros_numpy.point_cloud2.pointcloud2_to_xyz_array(pc2_msg, remove_nans=True)
+
+    def ocr_process(self, img_rgb):
+        result = self.ocr_reader.ocr(img_rgb, det=True, rec=True)
+        digits = []
+        for line in result:
+            for word in line:
+                text, conf = word[1][0], word[1][1]
+                if text.isdigit():
+                    bbox = word[0]
+                    x_min, y_min = int(bbox[0][0]), int(bbox[0][1])
+                    x_max, y_max = int(bbox[2][0]), int(bbox[2][1])
+                    w, h = x_max - x_min, y_max - y_min
+                    digits.append(((x_min, y_min, w, h), text, conf))
+        return digits
+
+    def image_callback(self, img_msg):
+        img = ros_numpy.numpify(img_msg)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        results = self.ocr_process(img_rgb)
+
+        for bbox, text, conf in results:
+            x, y, w, h = bbox
+            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(img, text, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+
+        annotated_msg = ros_numpy.msgify(Image, img, encoding="bgr8")
+        annotated_msg.header = img_msg.header
+        self.image_pub.publish(annotated_msg)
+
+if __name__ == "__main__":
+    node = BoxCountNode()
+    rospy.spin()

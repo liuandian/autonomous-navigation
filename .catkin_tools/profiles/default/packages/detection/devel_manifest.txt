@@ -1,0 +1,11 @@
+detection
+/home/wjx/new/ME5413_Final_Project/devel/.private/detection/cmake.lock /home/wjx/new/ME5413_Final_Project/devel/./cmake.lock
+/home/wjx/new/ME5413_Final_Project/devel/.private/detection/share/detection/cmake/detectionConfig-version.cmake /home/wjx/new/ME5413_Final_Project/devel/share/detection/cmake/detectionConfig-version.cmake
+/home/wjx/new/ME5413_Final_Project/devel/.private/detection/share/detection/cmake/detectionConfig.cmake /home/wjx/new/ME5413_Final_Project/devel/share/detection/cmake/detectionConfig.cmake
+/home/wjx/new/ME5413_Final_Project/devel/.private/detection/lib/detection/ocr_only_node.py /home/wjx/new/ME5413_Final_Project/devel/lib/detection/ocr_only_node.py
+/home/wjx/new/ME5413_Final_Project/devel/.private/detection/lib/detection/count_boxes.py /home/wjx/new/ME5413_Final_Project/devel/lib/detection/count_boxes.py
+/home/wjx/new/ME5413_Final_Project/devel/.private/detection/lib/detection/count_boxes_speedup.py /home/wjx/new/ME5413_Final_Project/devel/lib/detection/count_boxes_speedup.py
+/home/wjx/new/ME5413_Final_Project/devel/.private/detection/lib/detection/boxes_detection.py /home/wjx/new/ME5413_Final_Project/devel/lib/detection/boxes_detection.py
+/home/wjx/new/ME5413_Final_Project/devel/.private/detection/lib/detection/yolov11.py /home/wjx/new/ME5413_Final_Project/devel/lib/detection/yolov11.py
+/home/wjx/new/ME5413_Final_Project/devel/.private/detection/lib/detection/cmake.lock /home/wjx/new/ME5413_Final_Project/devel/lib/detection/cmake.lock
+/home/wjx/new/ME5413_Final_Project/devel/.private/detection/lib/pkgconfig/detection.pc /home/wjx/new/ME5413_Final_Project/devel/lib/pkgconfig/detection.pc

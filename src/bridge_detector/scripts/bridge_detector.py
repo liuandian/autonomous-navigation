@@ -10,12 +10,14 @@ from move_base_msgs.msg import MoveBaseActionResult
 import numpy as np
 from geometry_msgs.msg import Twist
 
+import tf
+from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import Bool  # 加入 Bool 类型
+
+
 class BridgeDetector:
     def __init__(self):
         # 仅在实例化时初始化节点，否则会报错
-        if not rospy.core.is_initialized():
-            rospy.init_node('bridge_detector', anonymous=True)
-
         self.map_topic = rospy.get_param('~map_topic', '/move_base/global_costmap/costmap')
         self.bridge_y_min = rospy.get_param('~bridge_y_min', -22.0)
         self.bridge_y_max = rospy.get_param('~bridge_y_max', -2.0)
@@ -35,7 +37,6 @@ class BridgeDetector:
 
         rospy.loginfo("🛠 正在准备检测桥...")
 
-
     def map_cb(self, msg):
         self.map_msg = msg
         rospy.loginfo("📥 接收到地图 (%d x %d)", msg.info.width, msg.info.height)
@@ -46,14 +47,15 @@ class BridgeDetector:
             self.reached_goal = True
         else:
             rospy.logwarn("⚠️ 导航失败，状态码: %d", msg.status.status)
+
     def move(self):
         pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
         rate = rospy.Rate(10)  # 10Hz
 
         twist = Twist()
-        twist.linear.x = 3  # 向前 0.3 m/s
-        twist.angular.z = 0  # 向左转 0.5 rad/s
+        twist.linear.x = 3  # 向前 3 m/s
+        twist.angular.z = 0  # 向左转 0. rad/s
 
         rospy.loginfo("Start moving...")
 
@@ -161,9 +163,11 @@ class BridgeDetector:
         self.marker_pub.publish(marker)
         rospy.loginfo("📤 已发布桥中心 marker")
 
+        FixedPathNavigator()
+
+
 class BridgeTriggerListener:
     def __init__(self):
-        rospy.init_node('bridge_trigger_listener')
         self.trigger_sub = rospy.Subscriber('/bridge_detection_trigger', Bool, self.trigger_cb)
         rospy.loginfo("📡 持续监听桥梁检测触发器...")
 
@@ -174,8 +178,67 @@ class BridgeTriggerListener:
             rospy.sleep(1.0)
             detector.detect_bridge()
 
+
+class FixedPathNavigator:
+    def __init__(self):
+        self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=10)
+        self.do_find_goal = rospy.Publisher('/do_find_goal', Bool, queue_size=1)
+        rospy.Subscriber('/move_base/result', MoveBaseActionResult, self.result_callback)
+
+        self.path = [
+            (3.5, -6, -3.14),
+            (3.5, -16, -3.14)
+        ]
+
+        self.current_index = 0
+        rospy.sleep(2.0)  # 等待时钟、发布器初始化
+        self.send_next_goal()
+
+    def send_next_goal(self):
+        if self.current_index >= len(self.path):
+            rospy.loginfo("✅ 所有目标点均已完成导航。")
+            self.do_find_goal.publish(Bool(data=True))
+            rospy.signal_shutdown("导航完成，自动退出。")
+            return
+
+        x, y, theta = self.path[self.current_index]
+        rospy.loginfo(f"➡️ 发布目标 {self.current_index + 1}/{len(self.path)}: ({x}, {y}, {theta})")
+
+        goal = PoseStamped()
+        goal.header.stamp = rospy.Time.now()
+        goal.header.frame_id = "map"
+        goal.pose.position.x = x
+        goal.pose.position.y = y
+        goal.pose.position.z = 0
+
+        quat = tf.transformations.quaternion_from_euler(0, 0, theta)
+        goal.pose.orientation.x = quat[0]
+        goal.pose.orientation.y = quat[1]
+        goal.pose.orientation.z = quat[2]
+        goal.pose.orientation.w = quat[3]
+
+        self.goal_pub.publish(goal)
+
+    def result_callback(self, msg):
+        status = msg.status.status
+        if status == 3:  # SUCCEEDED
+            rospy.loginfo("✅ 到达当前目标点。")
+            self.current_index += 1
+            rospy.sleep(0.5)
+            self.send_next_goal()
+        elif status in [4, 5, 9]:  # ABORTED, REJECTED, LOST
+            rospy.logwarn("⚠️ 到达目标失败，尝试下一个目标。")
+            self.current_index += 1
+            rospy.sleep(0.5)
+            self.send_next_goal()
+        else:
+            # 其他状态不处理
+            pass
+
+
 if __name__ == '__main__':
     try:
+        rospy.init_node('bridge_trigger_listener', anonymous=True)
         BridgeTriggerListener()
         rospy.spin()
     except rospy.ROSInterruptException:

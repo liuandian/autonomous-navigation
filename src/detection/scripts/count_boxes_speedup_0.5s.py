@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import rospy
+import concurrent.futures
 import ros_numpy
 import numpy as np
 import cv2
@@ -8,7 +9,7 @@ import tf2_ros
 import tf2_geometry_msgs
 import tf.transformations
 from sensor_msgs.msg import Image, PointCloud2, CameraInfo, CompressedImage
-from geometry_msgs.msg import PointStamped,PoseStamped
+from geometry_msgs.msg import PointStamped
 from sklearn.decomposition import PCA
 import time
 import math
@@ -25,6 +26,11 @@ class BoxCountNode:
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
 
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.ocr_result = None
+        self.last_ocr_time = 0
+        self.ocr_interval = 0.5  # 仅每0.5秒进行一次OCR
+
         self.lidar_points = None
         self.camera_intrinsics = None
         self.transform = None
@@ -33,17 +39,14 @@ class BoxCountNode:
         self.image_pub = rospy.Publisher("/detection/image_annotated", Image, queue_size=1)
         self.compressed_image_pub = rospy.Publisher("/detection/image_annotated/compressed", CompressedImage, queue_size=1)
         self.min_box_pub = rospy.Publisher("/detection/min_box_count", Int8, queue_size=1)
-        self.goal_pub = rospy.Publisher("/goal_from_digit", PoseStamped, queue_size=1)
-        # 存放已确认的 box（digit -> [(x, y, z), ...]）
+
         self.finalized_boxes = defaultdict(list)
-        # 存放待确认 box（digit -> [ { "centers": [(x, y, z), ...] }, ... ]）
         self.pending_boxes = defaultdict(list)
-        # 每个 digit 已确认 box 数
         self.box_counts = defaultdict(int)
         self.match_points_num = 20
-        self.dist_existing=1.2
-        self.dist_pending=0.3
-        self.required_frames=20
+        self.dist_existing = 1.2
+        self.dist_pending = 0.3
+        self.required_frames = 20
 
         rospy.Subscriber("/front/camera_info", CameraInfo, self.camera_info_callback)
         rospy.Subscriber("/mid/points", PointCloud2, self.lidar_callback)
@@ -67,7 +70,7 @@ class BoxCountNode:
 
     def update_transform(self, data_time):
         now = rospy.Time.now()
-        if (now - self.last_tf_update).to_sec() > 1.0:  # 每秒更新一次
+        if (now - self.last_tf_update).to_sec() > 1.0:
             try:
                 self.transform = self.tf_buffer.lookup_transform(
                     "front_camera_optical", "velodyne", rospy.Time(0), rospy.Duration(1.0)
@@ -89,48 +92,42 @@ class BoxCountNode:
         trans_vec = np.array([translation.x, translation.y, translation.z])
 
         transformed = points @ rot_mat.T + trans_vec
-        # 保证没有 NaN
         transformed = transformed[~np.isnan(transformed).any(axis=1)]
         return transformed
 
-
     def distance_3d(self, c1, c2):
-        return math.sqrt((c1[0] - c2[0])**2 + (c1[1] - c2[1])**2 + (c1[2] - c2[2])**2)
+        return math.sqrt((c1[0] - c2[0]) ** 2 + (c1[1] - c2[1]) ** 2 + (c1[2] - c2[2]) ** 2)
 
     def handle_detection(self, digit, box_center, dist_existing=1.0, dist_pending=0.5, required_frames=4):
-        rospy.loginfo(f"Current box counts: {self.box_counts.items()}")
-        # 先检查已确认的 box
         for fc in self.finalized_boxes[digit]:
             if self.distance_3d(fc, box_center) < dist_existing:
                 return
 
-        # 若不在已确认 box 中，检查或创建 pending box
         for pbox in self.pending_boxes[digit]:
             last_center = pbox["centers"][-1]
             if self.distance_3d(last_center, box_center) < dist_pending:
                 pbox["centers"].append(box_center)
                 if len(pbox["centers"]) >= required_frames:
-                    # 检查所有帧距离
                     for i in range(len(pbox["centers"]) - 1):
-                        if self.distance_3d(pbox["centers"][i], pbox["centers"][i+1]) > dist_pending:
+                        if self.distance_3d(pbox["centers"][i], pbox["centers"][i + 1]) > dist_pending:
                             self.pending_boxes[digit].remove(pbox)
                             return
                     arr = np.array(pbox["centers"])
                     avg_center = tuple(arr.mean(axis=0))
                     self.finalized_boxes[digit].append(avg_center)
                     self.box_counts[digit] += 1
-                    rospy.loginfo(f"Confirmed new box for digit {digit} at {avg_center}, total={self.box_counts[digit]}")
                     self.pending_boxes[digit].remove(pbox)
                 return
 
-        # 若所有 pbox 都不合适，新建一个
         self.pending_boxes[digit].append({"centers": [box_center]})
+
+    def ocr_process(self, img_rgb):
+        return self.ocr_reader.readtext(img_rgb, allowlist='0123456789')
 
     def image_callback(self, img_msg):
         start_time = time.time()
 
         if self.lidar_points is None or self.camera_intrinsics is None:
-            rospy.logwarn("Waiting for LiDAR points or camera intrinsics...")
             return
 
         self.update_transform(img_msg.header.stamp)
@@ -140,10 +137,8 @@ class BoxCountNode:
         img = ros_numpy.numpify(img_msg)
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-        # 转换点云坐标
-        points = self.lidar_points.copy()  # 避免 callback 更新干扰
+        points = self.lidar_points.copy()
         lidar_cam_all = self.transform_points(points, self.transform)
-
         min_len = min(len(lidar_cam_all), len(points))
         lidar_cam = lidar_cam_all[:min_len]
         lidar_points = points[:min_len]
@@ -152,13 +147,17 @@ class BoxCountNode:
         lidar_cam = lidar_cam[valid_indices]
         lidar_filtered = lidar_points[valid_indices]
 
-
-        # 投影到图像坐标
         uv = (self.camera_intrinsics @ lidar_cam.T).T
         uv[:, :2] /= lidar_cam[:, 2:3]
         uv = uv[:, :2].astype(int)
 
-        results = self.ocr_reader.readtext(img_rgb, allowlist='0123456789')
+        if time.time() - self.last_ocr_time > self.ocr_interval:
+            self.last_ocr_time = time.time()
+            future = self.executor.submit(self.ocr_process, img_rgb.copy())
+            self.ocr_result = future
+
+        results = self.ocr_result.result() if self.ocr_result and self.ocr_result.done() else []
+
         for bbox, text, conf in results:
             if conf > 0.5 and len(text.strip()) == 1 and text.strip() in "123456789":
                 bbox = np.array(bbox, dtype=int)
@@ -168,18 +167,15 @@ class BoxCountNode:
                 u_max, v_max = np.max(bbox[:, 0]), np.max(bbox[:, 1])
 
                 in_bbox_mask = (
-                    (uv[:, 0] >= u_min) &
-                    (uv[:, 0] <= u_max) &
-                    (uv[:, 1] >= v_min) &
-                    (uv[:, 1] <= v_max)
+                    (uv[:, 0] >= u_min) & (uv[:, 0] <= u_max) &
+                    (uv[:, 1] >= v_min) & (uv[:, 1] <= v_max)
                 )
                 matched_points = lidar_filtered[in_bbox_mask]
-                for u_p, v_p in uv[in_bbox_mask]:
-                    cv2.circle(img_rgb, (u_p, v_p), 3, (255, 0, 0), -1)
 
-                if len(matched_points) > self.match_points_num :
+                if len(matched_points) > self.match_points_num:
                     box_center_point = matched_points.mean(axis=0)
-                    normal_vector = self.adjust_normal_direction(self.estimate_normal(matched_points), box_center_point)
+                    normal_vector = self.adjust_normal_direction(
+                        self.estimate_normal(matched_points), box_center_point)
                     box_center = box_center_point + normal_vector * 0.4
 
                     center_pt = PointStamped()
@@ -187,47 +183,16 @@ class BoxCountNode:
                     center_pt.point.x, center_pt.point.y, center_pt.point.z = box_center
 
                     try:
-                        transform_world = self.tf_buffer.lookup_transform("map", "velodyne",
-                                                                          rospy.Time(0), rospy.Duration(1.0))
+                        transform_world = self.tf_buffer.lookup_transform("map", "velodyne", rospy.Time(0), rospy.Duration(1.0))
                         center_world = tf2_geometry_msgs.do_transform_point(center_pt, transform_world)
-
                         world_box_center = (
                             center_world.point.x,
                             center_world.point.y,
                             center_world.point.z
                         )
-                        if self.min_digit is None and self.box_counts:
-                            self.min_digit = min(self.box_counts, key=self.box_counts.get)
-                        if text == str(self.min_digit):
-                            goal = PoseStamped()
-                            goal.header = center_world.header
-                            goal.pose.position = center_world.point
-                            goal.pose.orientation.w = 1.0
-                            self.goal_pub.publish(goal)
-                            rospy.loginfo(f"[GOAL] 识别到目标数字 {text}，已发送目标点: {goal.pose.position}")
-
-                        self.handle_detection(
-                            digit=text,
-                            box_center=world_box_center,
-                            dist_existing= self.dist_existing,
-                            dist_pending= self.dist_pending,
-                            required_frames= self.required_frames
-                        )
-                        center_camera = tf2_geometry_msgs.do_transform_point(center_pt, self.transform)
-                        x, y, z = center_camera.point.x, center_camera.point.y, center_camera.point.z
-
-                        if z > 0:
-                            uv_center = self.camera_intrinsics @ np.array([x, y, z]) / z
-                            u, v = int(uv_center[0]), int(uv_center[1])
-                            cv2.circle(img_rgb, (u, v), 5, (0, 255, 255), -1)
-                            cv2.putText(img_rgb, f"{text} ({center_world.point.x:.2f},{center_world.point.y:.2f})",
-                                        (u, v - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-                            cv2.rectangle(img_rgb, tuple(bbox[0]), tuple(bbox[2]), (0, 255, 0), 2)
-                            cv2.circle(img_rgb, (u_center, v_center), 5, (255, 255, 255), -1)
+                        self.handle_detection(text, world_box_center, self.dist_existing, self.dist_pending, self.required_frames)
                     except Exception as e:
                         rospy.logerr(f"World transform failed: {str(e)}")
-                else:
-                    rospy.logwarn("Not enough inliers for box estimation")
 
         annotated_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
         annotated_msg = ros_numpy.msgify(Image, annotated_bgr, encoding="bgr8")
@@ -242,11 +207,9 @@ class BoxCountNode:
         ).tobytes()
         self.compressed_image_pub.publish(compressed_msg)
 
-        # 发布当前计数最少的 digit
         if self.box_counts:
             min_digit = min(self.box_counts, key=self.box_counts.get)
             self.min_box_pub.publish(int(min_digit))
-            rospy.loginfo(f"min_digit {min_digit}")
 
         end_time = time.time()
         rospy.loginfo(f"Processing time: {end_time - start_time:.2f} seconds")
