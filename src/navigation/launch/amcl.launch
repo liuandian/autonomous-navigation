@@ -1,69 +1,103 @@
 <launch>
 
+  <!-- 是否通过话题订阅地图，默认为 false（使用服务方式） -->
   <arg name="use_map_topic" default="false"/>
+  
+  <!-- 激光雷达话题名，可通过环境变量 JACKAL_LASER_TOPIC 设定，否则默认使用 front/scan -->
   <arg name="scan_topic" default="$(eval optenv('JACKAL_LASER_TOPIC', 'front/scan'))" />
 
+  <!-- 启动 AMCL 节点 -->
   <node pkg="amcl" type="amcl" name="amcl">
+  
+    <!-- 是否通过话题订阅地图 -->
     <param name="use_map_topic" value="$(arg use_map_topic)"/>
-    <!-- Publish scans from best pose at a max of 10 Hz -->
-    <param name="odom_model_type" value="diff"/>
-    <param name="odom_alpha5" value="0.1"/>
+
+    <!-- GUI 可视化刷新频率 -->
     <param name="gui_publish_rate" value="20.0"/>
+
+    <!-- 使用的里程计模型类型：差速驱动 -->
+    <param name="odom_model_type" value="diff"/>
+    
+    <!-- 里程计误差模型参数 -->
+    <param name="odom_alpha1" value="0.2"/>  <!-- 旋转 -> 旋转 误差 -->
+    <param name="odom_alpha2" value="0.2"/>  <!-- 旋转 -> 平移 误差 -->
+    <param name="odom_alpha3" value="0.2"/>  <!-- 平移 -> 平移 误差 -->
+    <param name="odom_alpha4" value="0.2"/>  <!-- 平移 -> 旋转 误差 -->
+    <param name="odom_alpha5" value="0.1"/>  <!-- 平移 -> 平移/旋转 混合误差 -->
+
+    <!-- 使用的激光模型类型：likelihood_field 更稳更快 -->
+    <param name="laser_model_type" value="likelihood_field"/>
+
+    <!-- 每次激光更新最多使用的激光束数 -->
     <param name="laser_max_beams" value="2000"/>
+
+    <!-- 激光有效距离范围（最小、最大） -->
     <param name="laser_min_range" value="-1.0"/>
     <param name="laser_max_range" value="15.0"/>
-    <param name="min_particles" value="10000"/>
-    <param name="max_particles" value="50000"/>
-    <!-- Maximum error between the true distribution and the estimated distribution. -->
-    <param name="kld_err" value="0.15"/>
-    <param name="kld_z" value="0.2"/>
-    <param name="odom_alpha1" value="0.2"/>
-    <param name="odom_alpha2" value="0.2"/>
-    <!-- translation std dev, m -->
-    <param name="odom_alpha3" value="0.2"/>
-    <param name="odom_alpha4" value="0.2"/>
+
+    <!-- 激光模型参数：匹配到地图的概率、短程误差、最大距离误差、随机误差 -->
     <param name="laser_z_hit" value="0.5"/>
     <param name="laser_z_short" value="0.05"/>
     <param name="laser_z_max" value="0.05"/>
     <param name="laser_z_rand" value="0.5"/>
-    <param name="laser_sigma_hit" value="0.2"/>
-    <param name="laser_lambda_short" value="0.1"/>
-    <param name="laser_model_type" value="likelihood_field"/>
 
-    <!-- Maximum distance to do obstacle inflation on map, for use in likelihood_field model. -->
+    <!-- 命中概率模型的标准差 -->
+    <param name="laser_sigma_hit" value="0.2"/>
+
+    <!-- 短程误差的指数衰减参数 -->
+    <param name="laser_lambda_short" value="0.1"/>
+
+    <!-- likelihood_field 模型中地图膨胀的最大距离 -->
     <param name="laser_likelihood_max_dist" value="2.0"/>
-    <!-- Translational movement required before performing a filter update.  -->
+
+    <!-- 位姿滤波更新的最小平移/旋转要求 -->
     <param name="update_min_d" value="0.2"/>
-    <!--Rotational movement required before performing a filter update. -->
     <param name="update_min_a" value="0.2"/>
+
+    <!-- 粒子滤波器参数 -->
+    <param name="min_particles" value="10000"/>      <!-- 最少粒子数 -->
+    <param name="max_particles" value="50000"/>      <!-- 最多粒子数 -->
+    <param name="kld_err" value="0.15"/>              <!-- KLD 误差容忍度 -->
+    <param name="kld_z" value="0.2"/>                 <!-- KLD 置信度参数 -->
+
+    <!-- 坐标系设置 -->
     <param name="odom_frame_id" value="odom"/>
     <param name="base_frame_id" value="base_link"/>
     <param name="global_frame_id" value="map"/>
-    <!-- Number of filter updates required before resampling. -->
-    <param name="resample_interval" value="1"/>
-    <!-- Increase tolerance because the computer can get quite busy -->
-    <param name="transform_tolerance" value="0.2"/>
-    <!-- Exponential decay rate for the slow average weight filter, used in deciding when to recover by adding random poses. A good value might be 0.001. -->
-    <param name="recovery_alpha_slow" value="0.0001"/>
-    <!--Exponential decay rate for the fast average weight filter, used in deciding when to recover by adding random poses. A good value might be 0.1. -->
-    <param name="recovery_alpha_fast" value="0.0005"/>
-    <!-- <param name = "tf_broadcast" value="true"/> -->
-    <param name = "save_pose_rate" value="1"/>
-     <param name = "tf_broadcast" value="true"/>
 
-    <!-- Initial pose mean -->
+    <!-- 每多少次更新执行一次粒子重采样 -->
+    <param name="resample_interval" value="1"/>
+
+    <!-- TF 时间同步容忍值 -->
+    <param name="transform_tolerance" value="0.2"/>
+
+    <!-- 粒子收敛控制参数（用于恢复机制） -->
+    <param name="recovery_alpha_slow" value="0.0001"/>
+    <param name="recovery_alpha_fast" value="0.0005"/>
+
+    <!-- 是否广播 map->odom 的 tf -->
+    <param name="tf_broadcast" value="true"/>
+
+    <!-- 将当前估计位姿保存的频率（保存到参数服务器） -->
+    <param name="save_pose_rate" value="1"/>
+
+    <!-- 初始位置设置 -->
     <param name="initial_pose_x" value="0.0" />
     <param name="initial_pose_y" value="0.0" />
     <param name="initial_pose_a" value="0.0" />
 
+    <!-- 初始位姿协方差（表示不确定性） -->
     <param name="initial_cov_xx" value="0.01*0.01"/>
     <param name="initial_cov_yy" value="0.01*0.01"/>
     <param name="initial_cov_aa" value="(π/12)*(π/12)"/>
 
-    <!-- When set to true, AMCL will subscribe to the map topic rather than making a service call to receive its map.-->
+    <!-- 是否通过话题订阅地图 -->
     <param name="receive_map_topic" value="true"/>
-    <!--  When set to true, AMCL will only use the first map it subscribes to, rather than updating each time a new one is received. -->
+
+    <!-- 是否只接收第一次地图消息（适用于静态地图） -->
     <param name="first_map_only" value="false"/>
+
+    <!-- 重映射激光雷达和地图话题 -->
     <remap from="scan" to="$(arg scan_topic)"/>
     <remap from="map" to="/move_base/global_costmap/costmap"/>
   </node>

@@ -58,7 +58,7 @@ There are two sources of models needed:
 
 #Build the workspace
 cd ME5413_Final_Project
-catkin build 
+catkin_make
 
 #source 
 source devel/setup.bash
