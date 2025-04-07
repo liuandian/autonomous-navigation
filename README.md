@@ -64,9 +64,9 @@ catkin build
 source devel/setup.bash
 
 #State machine
-rosrun StateMachine state_machine.py
+rosrun stateMachine state_machine.py
 #Nav
-roslaunch StateMachine final.launch
+roslaunch stateMachine final.launch
 
 
 #Box detection
