@@ -123,18 +123,22 @@ class BoxCountNode:
         start_time = time.time()
 
         if not (self.find_goal_mode or self.boxes_count_mode):
+            rospy.loginfo("[INFO] No active mode. Waiting for commands.")
             return
 
         if self.lidar_points is None or self.camera_intrinsics is None:
+            rospy.logwarn("[WARNING] Lidar points or camera intrinsics not available.")
             return
 
         self.update_transform(img_msg.header.stamp)
         if self.transform is None:
+            rospy.logwarn("[WARNING] Transform not available.")
             return
 
         img = ros_numpy.numpify(img_msg)
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
+        # Transform lidar points to camera frame
         points = self.lidar_points.copy()
         lidar_cam_all = self.transform_points(points, self.transform)
         lidar_cam = lidar_cam_all[lidar_cam_all[:, 2] > 0]
@@ -143,6 +147,7 @@ class BoxCountNode:
         uv[:, :2] /= lidar_cam[:, 2:3]
         uv = uv[:, :2].astype(int)
 
+        #OCR detection
         results = self.ocr_reader.readtext(img_rgb, allowlist='0123456789')
 
         for bbox, text, conf in results:
@@ -179,8 +184,27 @@ class BoxCountNode:
                                 goal.pose.orientation.w = 1.0
                                 self.goal_pub.publish(goal)
                                 rospy.loginfo(f"[GOAL] 识别到目标数字 {text}，已发送目标点: {goal.pose.position}")
-                        elif self.boxes_count_mode:
-                            self.handle_detection(text, world_box_center)
+                        else:
+                            self.handle_detection(
+                            digit=text,
+                            box_center=world_box_center,)
+                            
+                        center_camera = tf2_geometry_msgs.do_transform_point(center_pt, self.transform)
+                        x, y, z = center_camera.point.x, center_camera.point.y, center_camera.point.z
+                        if z > 0:
+                            # draw points
+                            for u_p, v_p in uv[in_bbox_mask]:
+                                cv2.circle(img_rgb, (u_p, v_p), 3, (255, 0, 0), -1)
+                            
+                            uv_center = self.camera_intrinsics @ np.array([x, y, z]) / z
+                            u, v = int(uv_center[0]), int(uv_center[1])
+                            #draw real center
+                            cv2.circle(img_rgb, (u, v), 5, (0, 255, 255), -1)
+                            cv2.putText(img_rgb, f"{text} ({center_world.point.x:.2f},{center_world.point.y:.2f})",
+                                        (u, v - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                            #draw bounding box
+                            cv2.rectangle(img_rgb, tuple(bbox[0]), tuple(bbox[2]), (0, 255, 0), 2)
+                            cv2.circle(img_rgb, (u_center, v_center), 5, (255, 255, 255), -1)
                     except Exception as e:
                         rospy.logwarn(f"Transform or handle failed: {e}")
 
